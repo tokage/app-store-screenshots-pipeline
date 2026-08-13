@@ -1,0 +1,10 @@
+# Build / dependency artifacts — never committed
+node_modules/
+.next/
+*.zip
+.DS_Store
+
+# NOTE: the runtime scaffold's own .gitignore lives inside
+# resources/template/app-store-screenshots/.gitignore and is intentionally
+# tracked here; it is copied into the user's App project at scaffold time
+# and there excludes src/, public/screenshots/, etc. (see NOTICE / ADR-002).

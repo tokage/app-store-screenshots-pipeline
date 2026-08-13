@@ -1,0 +1,10 @@
+{
+  "_doc": "Auto-detected device bezel metadata. Updated by probe_bezel.py. Used to composite screen captures into device mockups.",
+  "_probe_script": "scripts/probe_bezel.py",
+  "devices": {
+    "ipad": {
+      "mockup": "public/ipad-mockup.png",
+      "bezel_data": "public/ipad-mockup.bezel.json"
+    }
+  }
+}

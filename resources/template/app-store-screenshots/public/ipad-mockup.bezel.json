@@ -1,0 +1,102 @@
+{
+  "mockup": {
+    "path": "/ipad-mockup.png",
+    "width": 1780,
+    "height": 2550
+  },
+  "screen": {
+    "center_x": 890,
+    "center_y": 1275,
+    "half_width": 744,
+    "half_height": 1133,
+    "width": 1488,
+    "height": 2266,
+    "aspect_ratio": 0.6567
+  },
+  "cutout": {
+    "x": 146,
+    "y": 142,
+    "width": 1488,
+    "height": 2266
+  },
+  "bezel": {
+    "top": 142,
+    "bottom": 142,
+    "left": 146,
+    "right": 146
+  },
+  "outer_margin": {
+    "top": 142,
+    "note": "outer transparent margin: 26px top/bottom, 26px left/right (from manual scan)"
+  },
+  "probes": {
+    "from_center_transparent_pixel_count": {
+      "left": 745,
+      "right": 744,
+      "up": 1134,
+      "down": 1133
+    },
+    "first_opaque_pixel": {
+      "left": {
+        "x": 145,
+        "y": 1275,
+        "alpha": 255
+      },
+      "right": {
+        "x": 1634,
+        "y": 1275,
+        "alpha": 255
+      },
+      "up": {
+        "x": 890,
+        "y": 141,
+        "alpha": 255
+      },
+      "down": {
+        "x": 890,
+        "y": 2408,
+        "alpha": 255
+      }
+    },
+    "bezel_color_samples": {
+      "top_rgba": [
+        19,
+        19,
+        19,
+        255
+      ],
+      "bottom_rgba": [
+        18,
+        18,
+        18,
+        255
+      ],
+      "left_rgba": [
+        19,
+        19,
+        19,
+        255
+      ],
+      "right_rgba": [
+        18,
+        18,
+        18,
+        255
+      ]
+    },
+    "outer_margin_color_samples": {
+      "top_rgba": [
+        255,
+        255,
+        255,
+        0
+      ],
+      "left_rgba": [
+        255,
+        255,
+        255,
+        0
+      ]
+    }
+  }
+}

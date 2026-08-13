@@ -1,0 +1,23 @@
+app-store-screenshots-pipeline — THIRD-PARTY NOTICES
+===================================================
+
+This repository is composed of two parts under separate copyrights:
+
+1. Orchestration skill
+   Files: SKILL.md, references/, and this repository's README/LICENSE.
+   Copyright (c) 2026 刘俊. Licensed under the MIT License (see LICENSE).
+
+2. Vendored web beautify engine
+   Location: resources/template/app-store-screenshots/
+   A modified copy of https://github.com/ParthJadhav/app-store-screenshots
+   Copyright (c) 2026 Parth Jadhav. Licensed under the MIT License
+   (see resources/template/app-store-screenshots/LICENSE).
+
+   Modifications made to the vendored engine in this project:
+   - Replaced an absolute bezel image path
+     (public/ipad-mockup.bezel.json) with a public-root-relative path
+     ("/ipad-mockup.png") so the packaged skill passes path-validation.
+
+Redistribution and use of either part, with or without modification, are
+permitted under the terms of the MIT License, provided the corresponding
+copyright notices and permission notices above are retained.
