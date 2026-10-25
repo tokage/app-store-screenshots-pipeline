@@ -15,9 +15,11 @@ import type {
 } from "@/lib/types";
 import {
   CANVAS,
+  DUO_RATIO,
   IPAD_RATIO,
   MK_RATIO,
   WATCH_RATIO,
+  duoW,
   ipadW,
   phoneW,
   phoneWSmall,
@@ -32,6 +34,7 @@ import {
   AndroidPhone,
   AndroidTabletL,
   AndroidTabletP,
+  DuoPhone,
   IPad,
   Phone,
   Watch,
@@ -56,6 +59,7 @@ export function getCanvas(device: Device, orientation: Orientation) {
 function getFrameAspect(device: Device, orientation: Orientation) {
   switch (device) {
     case "iphone":      return MK_RATIO;
+    case "iphone-duo":  return DUO_RATIO;
     case "watch-45mm":  return WATCH_RATIO;
     case "android":     return 9 / 19.5;
     case "ipad":        return IPAD_RATIO;
@@ -73,6 +77,12 @@ export function getFrameForDevice(device: Device, orientation: Orientation): {
   switch (device) {
     case "iphone":
       return { Comp: Phone, widthFn: phoneW, smallWidthFn: phoneWSmall };
+    case "iphone-duo":
+      return {
+        Comp: DuoPhone,
+        widthFn: duoW,
+        smallWidthFn: (cW, cH) => duoW(cW, cH, 0.6),
+      };
     case "watch-45mm":
       return { Comp: Watch, widthFn: watchW, smallWidthFn: (cW, cH) => watchW(cW, cH, 0.42) };
     case "ipad":

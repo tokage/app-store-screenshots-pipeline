@@ -3,6 +3,9 @@ import type { Device, Orientation, SlideLayout, Theme, ThemeId } from "./types";
 // ---------- Canvas dimensions (design at largest required resolution) ----------
 export const CANVAS: Record<Device, { w: number; h: number; wL?: number; hL?: number }> = {
   iphone:        { w: 1320, h: 2868 },
+  // Duo's unfolded inner display is 1.42:1, i.e. tablet-ish, not phone-ish.
+  // It cannot share `iphone`'s canvas or export sizes.
+  "iphone-duo":  { w: 2007, h: 2853 },
   ipad:          { w: 2064, h: 2752 },
   "watch-45mm":  { w: 422, h: 514 },
   android:       { w: 1080, h: 1920 },
@@ -20,6 +23,11 @@ export const EXPORT_SIZES: Record<Device, ExportSize[]> = {
     { label: '6.5"', w: 1284, h: 2778 },
     { label: '6.3"', w: 1206, h: 2622 },
     { label: '6.1"', w: 1125, h: 2436 },
+  ],
+  // ASC's IPHONE_DUO slot accepts the unfolded inner display. Landscape
+  // (2853×2007) is also accepted; we ship portrait only.
+  "iphone-duo": [
+    { label: "Duo unfolded", w: 2007, h: 2853 },
   ],
   ipad: [
     { label: '13" iPad',       w: 2064, h: 2752 },
@@ -109,6 +117,15 @@ export function ipadW(cW: number, cH: number, clamp = 0.75) {
   return Math.min(clamp, 0.72 * (cH / cW) * IPAD_RATIO);
 }
 
+export const DUO_RATIO   = 2007 / 2853; // Duo unfolded chassis (drawn in CSS)
+
+// Duo's chassis is far wider than a phone's, so the phone's 0.72 height
+// fraction pushes the device top through the headline on `device-bottom`.
+// 0.68 leaves ≥135px of gap at every layout, measured on the 54-shot run.
+export function duoW(cW: number, cH: number, clamp = 0.78) {
+  return Math.min(clamp, 0.68 * (cH / cW) * DUO_RATIO);
+}
+
 export const WATCH_RATIO = 0.6067;       // Apple Watch 45mm bezel (560/923 mockup)
 
 export function watchW(cW: number, cH: number, clamp = 0.45) {
@@ -184,6 +201,7 @@ export const PROJECT_SCHEMA_VERSION = 2;
 
 export const DEVICE_LABEL: Record<Device, string> = {
   iphone: "iPhone",
+  "iphone-duo": "iPhone Duo (unfolded)",
   ipad: "iPad",
   "watch-45mm": "Apple Watch 45mm",
   android: "Android Phone",

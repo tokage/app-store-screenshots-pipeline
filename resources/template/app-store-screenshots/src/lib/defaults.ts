@@ -133,6 +133,27 @@ function watchStarter(): Slide[] {
   ];
 }
 
+// The wide canvas carries half as many slides before a deck starts to feel
+// padded, so the Duo starter ships two instead of the phone's six.
+function duoStarter(): Slide[] {
+  return [
+    {
+      id: nid(),
+      layout: "hero",
+      label: en("UNFOLDED"),
+      headline: en("A wide canvas\nof its own."),
+      screenshot: {},
+    },
+    {
+      id: nid(),
+      layout: "device-bottom",
+      label: en("FEATURE 01"),
+      headline: en("More room,\nsame app."),
+      screenshot: {},
+    },
+  ];
+}
+
 export const DEFAULT_PROJECT: ProjectState = {
   schemaVersion: PROJECT_SCHEMA_VERSION,
   appName: "My App",
@@ -145,6 +166,7 @@ export const DEFAULT_PROJECT: ProjectState = {
   appIcon: "",
   slidesByDevice: {
     iphone: makeStarterSlides(),
+    "iphone-duo": duoStarter(),
     android: makeStarterSlides(),
     ipad: ipadStarter(),
     "watch-45mm": watchStarter(),
@@ -165,5 +187,10 @@ export function newSlide(layout: Slide["layout"] = "device-bottom"): Slide {
 }
 
 export function detectPlatform(device: Device): "ios" | "android" {
-  return device === "iphone" || device === "ipad" || device === "watch-45mm" ? "ios" : "android";
+  return device === "iphone" ||
+    device === "iphone-duo" ||
+    device === "ipad" ||
+    device === "watch-45mm"
+    ? "ios"
+    : "android";
 }

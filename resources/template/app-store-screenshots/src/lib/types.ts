@@ -1,5 +1,6 @@
 export type Device =
   | "iphone"
+  | "iphone-duo"
   | "ipad"
   | "watch-45mm"
   | "android"

@@ -132,6 +132,7 @@ export function Toolbar(props: Props) {
           {platform === "ios" ? (
             <>
               <SelectItem value="iphone">{DEVICE_LABEL.iphone}</SelectItem>
+              <SelectItem value="iphone-duo">{DEVICE_LABEL["iphone-duo"]}</SelectItem>
               <SelectItem value="ipad">{DEVICE_LABEL.ipad}</SelectItem>
               <SelectItem value="watch-45mm">Apple Watch 45mm</SelectItem>
             </>

@@ -295,6 +295,64 @@ export function Watch({ src, alt = "", style, hideEmpty }: FrameProps) {
   );
 }
 
+// Foldable inner display. Drawn in CSS rather than reusing `mockup.png`:
+// that PNG is a 0.49-ratio slab with a Dynamic Island, and stretching it to
+// 0.70 would distort both the frame and the island. The side key sits on the
+// wrapper because it protrudes past the chassis.
+export function DuoPhone({ src, alt = "", style, hideEmpty }: FrameProps) {
+  const resolved = img(src);
+  return (
+    <div style={{ position: "relative", aspectRatio: "2007 / 2853", ...style }}>
+      <div
+        style={{
+          position: "absolute",
+          right: "-0.5%",
+          top: "21%",
+          width: "0.7%",
+          height: "9%",
+          borderRadius: "999px",
+          background: "linear-gradient(180deg, #3d3d42 0%, #1c1c20 100%)",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          borderRadius: "4.6% / 3.3%",
+          background: "linear-gradient(155deg, #35353a 0%, #1e1e22 42%, #0f0f12 100%)",
+          boxShadow:
+            "inset 0 0 0 1px rgba(255,255,255,0.12), 0 10px 46px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35)",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: "1.15%",
+            top: "0.9%",
+            width: "97.7%",
+            height: "98.2%",
+            borderRadius: "3.6% / 2.6%",
+            overflow: "hidden",
+            background: "#000",
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+          }}
+        >
+          {resolved ? (
+            <img
+              src={resolved}
+              alt={alt}
+              style={{ display: "block", width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }}
+              draggable={false}
+            />
+          ) : hideEmpty ? null : (
+            <EmptySlot />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmptySlot() {
   return (
     <div
