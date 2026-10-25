@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$CMD" ]] || { echo "用法: $0 --list | --get <字段> [档案] | --export <档案>" >&2; exit 2; }
-[[ -f "$PROFILES" ]] || { echo "✗ 找不到 $PROFILES（可用 --profiles 指定）" >&2; exit 2; }
+[[ -f "$PROFILES" ]] || { echo "✗ 找不到 ${PROFILES}（可用 --profiles 指定）" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "✗ 需要 python3 解析 JSON" >&2; exit 2; }
 
 python3 - "$PROFILES" "$CMD" "${KEY:-}" "${NAME:-}" <<'PY'
@@ -47,9 +47,17 @@ def expand(value):
     # seedDir 一类路径允许写 ~，取值时展开成 $HOME —— 档案文件因此不必写机器专属绝对路径
     return os.path.expanduser(value) if isinstance(value, str) else value
 
+def scalar(v):
+    # ⛔ 布尔必须序列化成 shell 惯例的 1/0。直接 str(True) 会得到 "True"，
+    # 而下游一律写 [ "$DEV_FOLDABLE" = "1" ] —— 于是折叠设备被当成非折叠、
+    # 静默跳过姿态，最后抓出外屏尺寸。这是最坏的失败模式：不报错。
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    return expand(v)
+
 def values(p):
     # 列表值在 shell 里要能安全拼接，所以逐项展开、空格分隔
-    return {k: (" ".join(map(str, v)) if isinstance(v, list) else expand(v)) for k, v in p.items()}
+    return {k: (" ".join(scalar(x) for x in v) if isinstance(v, list) else scalar(v)) for k, v in p.items()}
 
 if cmd == "list":
     default = data.get("default", "")

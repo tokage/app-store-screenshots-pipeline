@@ -17,7 +17,7 @@
         --src fastlane/screenshots-duo \
         --device iphone-duo \
         --slugs 01-on-this-day,02-journey-map,03-journey-home,04-memory,05-poster,06-photo-detail \
-        --src-pattern "ODM-ASC-DUO-{slug}.png" \
+        --src-pattern "MYAPP-ASC-DUO-{slug}.png" \
         --expect-size 2007x2853 \
         --dry-run
 

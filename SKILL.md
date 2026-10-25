@@ -62,14 +62,56 @@ eval "$(bash scripts/device_profile.sh --export <profile>)"
 档案格式、字段含义、多设备四条硬约定见
 [references/listing-and-devices.md](references/listing-and-devices.md)。
 
-**门**：体检结果能支撑「抓图 + 美化」；`device_profile.sh --list` 能列出目标设备。
+**设备只创建一次。** `simctl create` 不查重，每次无脑建会让机器堆出十几台同名设备
+（每台 1–3 GB）和一串 `Clone N` 克隆体，最后 CoreSimulator 越跑越慢甚至挂住。
+绑定由 `scripts/init_simulator.sh` 保证：先读档案的 `udidFile`，那台还活着就直接用；
+没命中再按名字找；都没有才建，建完立刻落盘。
+
+```bash
+bash scripts/init_simulator.sh <profile> --plan    # 先看会做什么
+bash scripts/init_simulator.sh <profile>           # 复用/首次创建 + 重置 + 启动
+bash scripts/init_simulator.sh <profile> --prune   # 清掉本档案名下多余设备与克隆体
+```
+
+档案里 `name` **必须带项目前缀**（`MYAPP-ASC-6.9`）：设备名是全机共用命名空间，
+两个项目都叫 `ASC-DUO` 会命中别人的设备并 `erase` 它。
+
+**门**：体检结果能支撑「抓图 + 美化」；`device_profile.sh --list` 能列出目标设备；
+`init_simulator.sh --plan` 显示的是「复用」而不是「首次创建」（除第一轮外）。
 不满足就先修环境或降级（缺什么跳什么，跳过的门必须标「未验证」）。
+
+> 模拟器管理界面在 Xcode 26 起叫 **Device Hub**（`open -a DeviceHub`），
+> 不再叫 Devices and Simulators。日常不需要开它，设备一律由脚本建。
 
 ## 阶段 1 — 抓无框截图
 
-1. 先读 `listing.json`（若还没有，按 [references/listing-contract.md](references/listing-contract.md)
-   从 README / PRD / `*.xcstrings` / Fastfile / Snapfile 抽取，并让用户确认）。
-2. 抓图走项目的 snapshot lane（**不要** frameit——机身由美化工程画）：
+**先定拍什么、先写文案，再按快门。** 顺序反了就是「图按 slug 走、文案按 index 走」，
+两边对不上要等上传完在商店页上才发现。
+
+1. **对照线上现状**，看现在是什么，再决定这轮改哪儿：
+
+   ```bash
+   asc screenshots list --app "$APP_ID" --version "$VERSION" --output table
+   asc screenshots list --app "$APP_ID" --version "$VERSION" --locale zh-Hans --output table
+   ```
+
+   输出 `Set ID / Display Type / Screenshot ID / File Name / File Size / State`。
+   常见发现：线上本来就有 6 张、只想换其中一张 —— 那就别整批重传。
+
+2. **把场景文案定稿进 `listing.json` 的 `slides`**（没有就按
+   [references/listing-and-devices.md](references/listing-and-devices.md) 从 README / PRD /
+   `*.xcstrings` / Fastfile / Snapfile 抽取，并让用户确认）：
+
+   ```jsonc
+   "slides": [
+     { "index": 1, "slug": "01-on-today", "scene": "首页-当天", "title": "…", "caption": "…" }
+   ]
+   ```
+
+   `slug` 必须与后面 `inject_screenshots.py --slugs` 一字不差；`title` / `caption` 是
+   美化稿上真正显示的字，不是内部说明。**这一层不写完不进第 3 步。**
+
+3. 抓图走项目的 snapshot lane（**不要** frameit——机身由美化工程画）：
 
    ```sh
    # Fastfile 里的关键三项，缺一项就会抓到不确定的东西
@@ -80,15 +122,22 @@ eval "$(bash scripts/device_profile.sh --export <profile>)"
    ```
 
    `Snapfile` / `Fastfile` 的写法、`clear_previous_screenshots` 的坑、部分重跑
-   （`ODM_SHOT_MODE` 那类逃生开关）、九语种子库准备，见
+   （项目自己的 `SHOT_MODE` 那类逃生开关）、九语种子库准备，见
    [references/snapfile-fastfile.md](references/snapfile-fastfile.md) 与
    [references/multilocale-batch.md](references/multilocale-batch.md)。
 
-3. 折叠设备要摆姿态：`duoctl` 展开内屏 → **等画面真的转过去** → 再判定 →
-   然后再启动 UI 测试。`rotate` 返回成功但画面没转是常态，此时抓到的整批都是外屏尺寸。
-   完整时序见 [references/foldable-and-multishot.md](references/foldable-and-multishot.md)。
+4. 折叠设备先摆姿态，再启动 UI 测试：
 
-4. **门：收货门。**
+   ```bash
+   bash scripts/duo_pose.sh <profile>    # 非折叠档案静默跳过，可直接无条件调用
+   ```
+
+   它做三件手工做不可靠的事：`duoctl open` → 等 → `duoctl rotate portrait` → 再等 →
+   校验 `inner + portrait` → **真抓一张探针图比像素**。最多重试三轮。
+   `duoctl state` 已报新姿态但画面还在旧姿态是常态，所以判定必须以像素为准。
+   时序细节与半折布局约束见 [references/foldable-and-multishot.md](references/foldable-and-multishot.md)。
+
+5. **门：收货门。**
 
    ```bash
    python3 scripts/verify_shots.py \
@@ -128,8 +177,8 @@ eval "$(bash scripts/device_profile.sh --export <profile>)"
 
    四道门：**张数**、**尺寸**、**跨区同格尺寸一致**（防"一半内屏一半外屏"）、
    **覆盖保护**（目标已存在且像素不同，必须显式 `--force`）。
-   幻灯片文案必须来自项目自己的分镜文档，不要临场编——图和文案会各走各的，
-   等上传完才发现对不上。
+   `--slugs` 必须与 `listing.json` 的 `slides[].slug` 完全一致，文案也从 `slides` 灌进去——
+   **不要临场编**，图和文案会各走各的，等上传完才发现对不上。
 
 4. **非破坏性重入**：`app-store-screenshots.json` 已存在时**绝不覆盖**。
    只有用户明确说"只刷新图"时才只重拷图片，手工排版全部保留。
@@ -210,7 +259,7 @@ asc screenshots upload --app "$APP_ID" --version "$VERSION" \
 - **别用 `set -e` 逐区跑**：首区失败会让后面所有区一区未传，看起来像"全失败"，
   实际是"全没跑"。要么一次跑完，要么单区单独跑并逐区记账。
 
-**验收只有一件事**：`asc screenshots list` 回读，每区张数一致、槽位正确。
+**验收只有一件事**：`asc screenshots list` 回读，每区张数一致、槽位正确、State 全 `COMPLETE`。
 
 ### 5b. 文案
 
@@ -246,25 +295,29 @@ bash scripts/publish_asc.sh --app-id "$APP_ID" --version "$VERSION" \
 - 不在抓图循环里用 `set -e` 逐区跑。
 - 不拿屏幕宽度当折叠姿态的判据。
 - 不把"跳过的门"写成"通过"。
+- **不在没定 `slides` 文案的情况下开拍**（图与文案会各走各的）。
+- **不用 `simctl create` 裸建设备**（绕开 `init_simulator.sh` 就会重复建、堆满磁盘）。
+- **不给设备起无前缀的名字**（跨项目撞名会 `erase` 掉别人的设备）。
 
 ## 文件索引
 
 | 文件 | 讲什么 |
 |---|---|
 | `scripts/check_environment.py` | 四态体检 |
-| `scripts/device_profile.sh` | 设备身份唯一出口 |
+| `scripts/device_profile.sh` | 设备身份唯一出口（JSON → `DEV_*`） |
+| `scripts/init_simulator.sh` | 设备绑定：复用优先、落盘 UDID、`--prune` 清场 |
+| `scripts/duo_pose.sh` | 折叠姿态：摆 + 等画面 + 像素校验，非折叠静默跳过 |
 | `scripts/verify_shots.py` | 抓图收货门（四判据） |
 | `scripts/inject_screenshots.py` | 注入四门 |
 | `scripts/stage_beautified.sh` | 导出树 → ASC 上传树 + 硬门 |
 | `scripts/publish_asc.sh` | 文案五步 + 回读验收 |
 | `scripts/probe_environment.py` | 环境探针（被体检调用） |
-| `resources/device-profiles.example.json` | 设备档案样例，拷到项目里改值 |
+| `resources/device-profiles.example.json` | 设备档案样例，拷到项目里改值（记得换成自己的项目前缀） |
 | `resources/template/app-store-screenshots/` | 美化工程模板（Next.js + 设备机身 + 版式） |
 
 references 里按问题域分，遇到具体问题再翻，不要顺序通读：
 
-- 契约与设备：[listing-contract.md](references/listing-contract.md) ·
-  [listing-and-devices.md](references/listing-and-devices.md)
+- 契约、设备与设备绑定：[listing-and-devices.md](references/listing-and-devices.md)
 - 抓图：[snapfile-fastfile.md](references/snapfile-fastfile.md) ·
   [multilocale-batch.md](references/multilocale-batch.md) ·
   [foldable-and-multishot.md](references/foldable-and-multishot.md) ·

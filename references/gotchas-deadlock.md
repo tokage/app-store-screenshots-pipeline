@@ -137,7 +137,7 @@ derived_data_path("./fastlane/DerivedData")
 App 首屏若按 `(月, 日)` 比对相册，而演示照片的 EXIF 日期是准备那天写死的，那么**过了那天第一格就是空的**。
 症状不是报错，是超时：实测一个区在一个 AX 查询里从 `t=38.97s` 直接跳到 `t=792.60s`，日志零 error。
 
-修：给 App 一个启动参数钉死首屏日期（如 `-ODMDisplayDate 2026-10-23`），`displayDate` 优先读它。
+修：给 App 一个启动参数钉死首屏日期（如 `-DisplayDate 2026-10-23`），`displayDate` 优先读它。
 截图只是静态展示，不需要日期与真实当天一致；真正使用 App 时会自然按当天过滤。
 
 ## 坑 15：最后一格进详情/信息态后 App 永不静默 ⇒ `snapshot()` 卡死在 wait-for-idle

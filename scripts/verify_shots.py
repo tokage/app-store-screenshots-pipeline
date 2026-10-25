@@ -15,7 +15,7 @@
 -----
     python3 verify_shots.py --root fastlane/screenshots-duo \
         --expect-size 2007x2853 --expect-count 6 \
-        --pattern "ODM-ASC-DUO-*.png" --since 2026-10-24T12:00:00
+        --pattern "MYAPP-ASC-DUO-*.png" --since 2026-10-25T09:00:00
 
     # 只核某几个区
     python3 verify_shots.py --root fastlane/screenshots --locales en,de,ja \

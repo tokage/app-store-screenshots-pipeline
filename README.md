@@ -5,8 +5,8 @@
 
 | 阶段 | 干什么 | 门 |
 |---|---|---|
-| 0 | 环境体检 + 读设备档案 | 缺必需项就停，不猜 |
-| 1 | 抓每语言 × 每设备的无框截图 | 张数 / 尺寸 / mtime / 跨区 md5 四项 |
+| 0 | 环境体检 + 读设备档案 + 绑定模拟器 | 缺必需项就停；设备是「复用」不是「新建」 |
+| 1 | 对照线上现状、定场景文案、抓截图 | `slides` 文案定稿；张数 / 尺寸 / mtime / 跨区 md5 |
 | 2 | 注入美化工程 | 张数 / 尺寸 / 跨区同格一致 / 覆盖保护 |
 | 3 | 起编辑器并证明它真的能渲染 | 真浏览器 DOM 无运行时错误 |
 | 4 | 导出并整理成 ASC 上传树 | 语言码 / 槽位 / 张数 / 版本号 |
@@ -40,6 +40,24 @@ ln -s ~/Projects/app-store-screenshots-pipeline ~/.workbuddy/skills/app-store-sc
 python3 scripts/check_environment.py --app-root .
 ```
 
+## 设备只创建一次
+
+`xcrun simctl create` **不查重**。脚本里每次无脑 create 会让机器堆出十几台同名设备
+（每台 1–3 GB）和一串 `Clone N` 克隆体，最后 CoreSimulator 越跑越慢甚至挂住。
+
+绑定靠两样东西：档案里的 `name`（**必须带项目前缀**，如 `MYAPP-ASC-6.9`——设备名是全机
+共用命名空间，两个项目都叫 `ASC-DUO` 会互相 `erase`）和 `udidFile`（首次创建后落盘，
+之后每轮先读它）。
+
+```bash
+bash scripts/init_simulator.sh <profile> --plan    # 先看会做什么，不动系统
+bash scripts/init_simulator.sh <profile>           # 复用优先，没有才建
+bash scripts/init_simulator.sh <profile> --prune   # 清掉本档案名下多余设备与克隆体
+```
+
+模拟器管理界面在 Xcode 26 起叫 **Device Hub**（`open -a DeviceHub`），
+不再叫 Devices and Simulators。日常抓图不需要开它。
+
 ## 合并来源
 
 本仓库吸收并取代了 `ios-fastlane-screenshots`。合并的理由是两个技能**互相依赖却互不提及**：
@@ -58,7 +76,9 @@ skill-dependencies.json      依赖清单（能力 / 检查 / 配置 / 降级）
 references/                  按问题域分的细节，遇到问题再翻
 scripts/
   check_environment.py       四态体检
-  device_profile.sh          设备身份唯一出口
+  device_profile.sh          设备身份唯一出口（JSON → DEV_*）
+  init_simulator.sh          设备绑定：复用优先 / UDID 落盘 / --prune 清场
+  duo_pose.sh                折叠姿态：摆 + 等画面 + 像素校验
   verify_shots.py            抓图收货门
   inject_screenshots.py      注入四门
   stage_beautified.sh        导出树 → ASC 上传树

@@ -18,17 +18,18 @@
 每次 `xcodebuild test` 有固定启动开销（编译检查、安装 runner、启动模拟器、权限门）。**6 格分 6 次调用 ≈ 6 份开销**；一次调用跑 6 条用例只付一份。
 
 ```bash
-# ✅ 一次 xcodebuild 跑完一个语言区的全部帧，再统一收货
+# ⚠️ scheme / 测试类 / 用例名都是示例，换成你自己项目的。
+# 用例名要能看出拍的是哪一格，因为漏格时排查全靠名字。
 xcodebuild test \
-  -scheme OneDayMemory \
+  -scheme <App> \
   -destination "platform=iOS Simulator,id=$UDID" \
   -derivedDataPath fastlane/build \
-  -only-testing:OneDayMemoryUITests/ASCShotTests/testShot01OnThisDay \
-  -only-testing:OneDayMemoryUITests/ASCShotTests/testShot02JourneyMap \
-  -only-testing:OneDayMemoryUITests/ASCShotTests/testShot03JourneyHome \
-  -only-testing:OneDayMemoryUITests/ASCShotTests/testShot04Memory \
-  -only-testing:OneDayMemoryUITests/ASCShotTests/testShot05Poster \
-  -only-testing:OneDayMemoryUITests/ASCShotTests/testShot06PhotoDetail
+  -only-testing:<App>UITests/ASCShotTests/testShot01Home \
+  -only-testing:<App>UITests/ASCShotTests/testShot02List \
+  -only-testing:<App>UITests/ASCShotTests/testShot03Detail \
+  -only-testing:<App>UITests/ASCShotTests/testShot04Editor \
+  -only-testing:<App>UITests/ASCShotTests/testShot05Share \
+  -only-testing:<App>UITests/ASCShotTests/testShot06Settings
 ```
 
 ### 1.2 但绝不允许无门链式循环
@@ -36,15 +37,17 @@ xcodebuild test \
 ```bash
 # ❌ 事故写法：de 区 02/03/05 全失败，循环照样继续跑 es/fr/ja...
 for l in de es fr ja ko; do
-  use_store.sh $l
-  shoot_locale.sh $l
+  use_store.sh $l          # 换种子库
+  shoot_locale.sh $l       # 抓该区
 done
 
 # ✅ 每区一门：失败即停，本区修好再进下一区
+#    换库/抓图用项目自己的脚本；收货门用技能自带的 verify_shots.py
 for l in de es fr ja ko; do
-  use_store.sh "$l" || exit 1
-  shoot_locale.sh "$l" || { echo "❌ $l 出图失败，停在此处，不进入下一区"; exit 1; }
-  verify_locale.py "$l" || { echo "❌ $l 体检不合格，停"; exit 1; }
+  ./your-use-store.sh "$l" || exit 1
+  ./your-shoot-locale.sh "$l" || { echo "❌ $l 出图失败，停在此处，不进入下一区"; exit 1; }
+  python3 scripts/verify_shots.py --root "$SHOTS/$l" --pattern "*.png" \
+    --expect-size "$PX" --expect-count 6 || { echo "❌ $l 体检不合格，停"; exit 1; }
 done
 ```
 
@@ -111,11 +114,11 @@ private var journeyPredicate: NSPredicate {
 
 ```swift
 // ❌ 出事写法：等不到就算了，测试照样绿
-_ = memoryBody.waitForExistence(timeout: 8)
+_ = contentBody.waitForExistence(timeout: 8)
 snapshot("06-photo-detail")
 
 // ✅ 等不到就失败，把问题暴露在这一区
-XCTAssertTrue(memoryBody.waitForExistence(timeout: 8),
+XCTAssertTrue(contentBody.waitForExistence(timeout: 8),
               "记忆正文未出现——遮罩/面板/语言任一环节有问题")
 ```
 
@@ -145,7 +148,7 @@ XCTAssertTrue(memoryBody.waitForExistence(timeout: 8),
 let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
 start.press(forDuration: 0.3, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.38)),
            withVelocity: .slow, thenHoldForDuration: 0.3)
-XCTAssertTrue(memoryBody.waitForExistence(timeout: 8))   // 证明手势真的生效了
+XCTAssertTrue(contentBody.waitForExistence(timeout: 8))   // 证明手势真的生效了
 ```
 
 ### 3.3 相关坑：元素存在但不可点
@@ -271,7 +274,7 @@ git log --oneline --all --grep="重复\|重影\|双绘\|duplicate"
 
 > **`prepare`（导入照片）与 `seed`（造 store）只做一次。产物要归档，不是现场重造。**
 
-- 九语种子库归档在仓库外（如 `~/asc-seeds/<locale>/ASCDemo.store*`），换库用 `simctl` 直接替换容器内文件，**比跑 fastlane lane 快一个量级**。
+- 九语种子库归档在仓库外（如 `~/asc-seeds/<locale>/seed.store*`），换库用 `simctl` 直接替换容器内文件，**比跑 fastlane lane 快一个量级**。
 - 归档前先 `md5` 确认九区**互不相同**（每个区一份本地化文案）。九区 md5 全同 = 你其实只造了一份。
 - 重跑 `seed` 前先确认 `fastlane/photos-prepared/<set>/manifest.json` 存在；不存在就别跑，去用归档。
 
@@ -280,8 +283,8 @@ git log --oneline --all --grep="重复\|重影\|双绘\|duplicate"
 C=$(xcrun simctl get_app_container "$UDID" "$BUNDLE_ID" data)
 D="$C/Library/Application Support"
 rm -f "$D"/default.store*                    # 先清 -wal / -shm，残留的旧库会把内容盖回去
-for f in ~/asc-seeds/"$L"/ASCDemo.store*; do
-  cp "$f" "$D/default.store${f##*ASCDemo.store}"   # 后缀原样带过去：'' / -wal / -shm
+for f in ~/asc-seeds/"$L"/seed.store*; do
+  cp "$f" "$D/default.store${f##*seed.store}"   # 后缀原样带过去：'' / -wal / -shm
 done
 ```
 

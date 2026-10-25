@@ -133,6 +133,9 @@ xcrun simctl list devices    # 取该 runtime 下设备名
 把设备名（含 `(版本)` 后缀）填入 Snapfile `devices`。App scheme 名从 `.xcworkspace/xcshareddata/xcschemes/` 读取，不要臆测。
 
 ## 5. 失败分支
-- `xcrun simctl list devices` 为空 → 先用 Simulator 新建对应设备。
+- `xcrun simctl list devices` 里没有目标设备 → 跑 `bash scripts/init_simulator.sh <profile>`。
+  **不要**去 Device Hub（Xcode 26 起 Devices and Simulators 的新名字）手点新建：
+  手点出来的设备名与档案里的 `name` 对不上，下一轮脚本又会再建一台，
+  几轮之后机器上就是一堆同名设备。绑定规则见 `setup-guide.md`。
 - 编译门禁失败 → 先修代码再跑图。
 - frameit 找不到设备边框 → 安装 `fastlane frameit` 所需设备模板或跳过加框。

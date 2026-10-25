@@ -73,7 +73,7 @@ func testShotLastPhotoDetail() { continueAfterFailure = false; … }
 // 启动参数钉死首屏日期；截图不需要"真的是今天"
 private static let pinnedDisplayDate: Date? = {
     let args = ProcessInfo.processInfo.arguments
-    guard let i = args.firstIndex(of: "-ODMDisplayDate"), i + 1 < args.count else { return nil }
+    guard let i = args.firstIndex(of: "-DisplayDate"), i + 1 < args.count else { return nil }
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "UTC")
     return f.date(from: args[i + 1])
 }()
