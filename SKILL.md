@@ -1,402 +1,277 @@
 ---
 name: app-store-screenshots-pipeline
-description: Orchestrates the full App Store / Google Play screenshot pipeline for any iOS or Android project — read the listing from project docs, optionally capture frameless screenshots with fastlane, scaffold a Next.js beautify engine into the filesystem, inject the config and screenshots, then launch it with bun for the user to fine-tune. Stops before export and ASC publishing, which are user operations.
-version: 1.0.0
+description: End-to-end App Store screenshot and listing pipeline for iOS projects. Reads the listing from the project's own docs, captures frameless screenshots with fastlane across every locale and device (foldables included), gates the output by count, size, mtime and cross-locale pixels, injects them into the bundled Next.js beautify editor, proves the running editor in a real browser, exports, stages the upload tree, then pushes screenshots and metadata to App Store Connect and verifies by read-back. Absorbs the retired ios-fastlane-screenshots skill. 触发：跑截图流水线、给这个 App 出商店图、准备 App Store 截图、配 fastlane 多语言多设备截图、snapshot 抓图加框、更新商店页文案与更新说明。
+version: 2.0.0
 agent_created: true
 ---
 
-# App Store & Google Play Screenshots Pipeline
+# App Store 截图文案流水线（端到端）
 
-## What this skill does
+从「项目代码」到「App Store 上真的换了图、换了文案」的一条链路。六个阶段，
+每个阶段末尾有一道门；门不过就停，不进下一阶段。
 
-A single orchestration skill that turns a project's listing into editable, export-ready
-store screenshots. It chains four stages and then **hands off to the user**:
+| 阶段 | 干什么 | 门 |
+|---|---|---|
+| 0 | 读依赖与设备档案 | `check_environment.py` 不是 `needs_setup`；设备档案齐全 |
+| 1 | 抓无框截图（每语言 × 每设备） | `verify_shots.py` 四门全过 |
+| 2 | 注入 + 起美化工程 | `inject_screenshots.py` 四门全过 |
+| 3 | 编辑器可用（真的能渲染） | 真浏览器 DOM 里无运行时错误、有真实文案 |
+| 4 | 导出并整理成 ASC 上传树 | `stage_beautified.sh` 四门全过 |
+| 5 | 推截图 + 推文案 | `asc` 回读逐张/逐字段一致 |
 
-1. **Read listing** — extract app name, platforms, locales, devices, tagline, features,
-   and screenshot spec from the project's own docs (PRD, README, `.xcstrings`, Fastfile,
-   Snapfile). Produce a `listing.json` contract and confirm with the user.
-2. **Capture (optional)** — if the machine is macOS + Xcode + fastlane and the app has a
-   fastlane capture config, run `fastlane raw_screenshots` to produce **frameless**
-   screenshots. Degrades gracefully off-Mac.
-3. **Scaffold + inject** — copy the bundled Next.js beautify engine into
-   `<app-root>/app-store-screenshots/`, map `listing.json` into
-   `app-store-screenshots.json`, and copy the frameless PNGs into `public/screenshots/`.
-4. **Launch + hand off** — `bun run dev` (fallback `npm run dev`), open the editor, and
-   stop. The user fine-tunes, exports, and (optionally) publishes by hand.
+> **贯穿全程的不变量：一个语言区是一笔事务。** 跑完一个区的所有格 → 验这个区 →
+> 再进下一个区。批量循环在某个区失败后继续往下跑，会把一次失败变成 N 次排查——
+> 这是九语实测里最贵的错误。
 
-The skill **does not** perform export or App Store Connect publishing. Fine-tuning and
-export are inherently iterative and belong to the user. It *does* prepare everything the
-publish step needs (see **Stage 4**).
+## 何时用
 
-> **Invariant across every stage: one locale is one transaction.** Run all slides of a
-> locale, verify that locale, then move to the next. A batch loop that keeps going after a
-> failed locale turns one failure into N investigations — the single most expensive mistake
-> observed on a real 9-locale run.
+「准备 App Store 截图」「跑截图流水线」「给这个 App 出商店图」「更新商店页文案」，
+以及任何需要「改完 UI → 商店页看到变化」的场合。
 
-## When to use
+技能装在用户级，任何项目都能调；每个项目自己生成 `<app-root>/app-store-screenshots/`。
 
-Triggers: "prepare App Store screenshots", "run the screenshot pipeline",
-"make Play Store assets for <app>", "scaffold store screenshots for this project".
+## 阶段 0 — 依赖与设备档案
 
-The skill is project-agnostic: install it once at the user level and invoke it from any
-project. Each project gets its own `<app-root>/app-store-screenshots/` scaffold.
+先体检，不要凭记忆判断环境：
 
-## Prerequisites (machine level)
+```bash
+python3 scripts/check_environment.py --app-root .
+```
 
-- **bun** on the machine that runs beautify (any OS). Fallback to Node + npm.
-- **fastlane + Xcode + ruby** only on macOS, and only for the capture stage. If absent,
-  capture is skipped and the pipeline continues with manually supplied screenshots.
-- The app repo should carry fastlane capture config (`.snapfile` / `Fastfile` / UI test
-  target / `DemoDataBuilder`). Without it, the user provides frameless PNGs manually.
+四态路由（`ready` / `partial` / `needs_setup` / `unavailable`）与逐项配置见
+[references/setup-guide.md](references/setup-guide.md)。只读体检，不启动模拟器。
 
-## Stage 0 — Read listing
+然后确认设备档案存在（没有就从 `resources/device-profiles.example.json` 拷一份到
+`fastlane/device-profiles.json` 再改值）：
 
-1. Resolve the target app root. Default to the current working directory; accept a
-   user-specified path.
-2. Probe, in priority order:
-   - `README.md`, `docs/PRD.md`, any `*.md` PRD.
-   - `*.xcstrings` (find in the repo) — source of locales.
-   - `fastlane/Fastfile`, `fastlane/Snapfile`, `fastlane/Appfile`.
-3. Extract fields with heuristics (record the source file for each):
-   - `appName`: README title, Fastfile `app_identifier` basename, or ASC metadata.
-   - `bundleId`: Fastfile `app_identifier` / Appfile.
-   - `platforms`: `ios` if `.xcstrings`/iOS snapshot lanes exist; `android` if a gradle
-     or android lane exists. Default both when unclear.
-   - `locales`: languages from `.xcstrings` (`sourceLanguage` + `strings` keys) or
-     Snapfile `languages`.
-   - `devices`: Snapfile `devices` mapped to engine ids (`iphone`, `ipad`,
-     `watch-45mm`, `android`, `android-7`, `android-10`, `feature-graphic`). Default
-     `iphone` + `android`.
-   - `tagline`, `valueProposition`, `features`: from PRD/README headings and bullets.
-   - `screenshotSpec.countPerDevice`: Snapfile slot count or default `4`.
-4. Write `listing.json` (schema in `references/listing-contract.md`) to the app root.
-   This file is **git-tracked** — it is the source of truth for the run.
-5. **Gate.** Present a summary card: app name, platforms, locales, devices, feature
-   count, screenshot count per device. Ask the user to confirm or adjust. **Do not
-   proceed until confirmed.**
+```bash
+bash scripts/device_profile.sh --list
+```
 
-## Stage 1 — Capture (frameless screenshots)
+**设备身份只有一个出口。** 一台设备同时决定九个值：模拟器类型、runtime、ASC 槽、
+允许像素、原始截图目录、种子库目录、美化工程的 device 键、导出尺寸目录、是否折叠。
+这九个值散落在 init / shoot / use_store / Snapfile / Fastfile / 上传脚本里各写一遍时，
+加第二台设备必然漏改一处——**而漏改的表现不是报错，是静默抓错设备或静默抓到外屏尺寸**，
+要等商店页上线才发现。所以任何脚本、配置都不许再写死设备名，一律：
 
-1. Environment probe:
-   - `uname` == `Darwin`?
-   - `xcodebuild -version` present?
-   - `fastlane --version` present?
-   - fastlane capture config present (`fastlane/Snapfile` or a snapshot lane)?
-2. If all present: run `bundle exec fastlane raw_screenshots` (or the project's snapshot
-   lane **without** `frameit`). Output lands in `fastlane/screenshots/`. Use the project's
-   own lane name when known; `raw_screenshots` is the default.
-3. **Degradation** when not macOS / no fastlane / no config:
-   - Skip capture. Tell the user: "Capture needs macOS + Xcode + fastlane. Run this stage
-     on a Mac with the app's fastlane capture configured, or place frameless screenshots
-     manually at `fastlane/screenshots/<locale>/<device>-<NN>.png`. The pipeline continues
-     to beautify with whatever screenshots are available."
-4. If `fastlane/screenshots/` already contains PNGs, offer to reuse them instead of
-   re-capturing. Ask the user.
+```bash
+eval "$(bash scripts/device_profile.sh --export <profile>)"
+# DEV_ASC_TYPE / DEV_PIXELS / DEV_SHOTS_DIR / DEV_EDITOR_DEVICE / DEV_EXPORT_SIZE / DEV_FOLDABLE …
+```
 
-## Stage 2 — Scaffold + inject
+档案格式、字段含义、多设备四条硬约定见
+[references/listing-and-devices.md](references/listing-and-devices.md)。
 
-1. `TARGET = <app-root>/app-store-screenshots/`.
-2. If `TARGET` does **not** exist:
-   - Copy the bundled engine `resources/template/app-store-screenshots/` → `TARGET`.
-   - Write `TARGET/.gitignore` (see `references/git-boundary.md`) if absent.
-3. Map `listing.json` → `TARGET/app-store-screenshots.json`:
-   - `appName`, `tagline` → copy; `features` → slide copy.
-   - `locales`, `devices` → engine device ids.
-   - Keep the engine's expected `schemaVersion` and default export sizes (already aligned
-     to store requirements).
-   - Reference screenshots at
-     `public/screenshots/<platform>/<device>/<locale>/<NN>.png` after injection. Do not
-     invent paths for files that do not exist.
-4. Copy frameless PNGs (when present) with `resources/scripts/inject_screenshots.py` —
-   it resolves each slide's `screenshot` template (with `{locale}`) and asserts the expected
-   count per locale, so a locale that silently got 5 files instead of 6 cannot slip through:
+**门**：体检结果能支撑「抓图 + 美化」；`device_profile.sh --list` 能列出目标设备。
+不满足就先修环境或降级（缺什么跳什么，跳过的门必须标「未验证」）。
+
+## 阶段 1 — 抓无框截图
+
+1. 先读 `listing.json`（若还没有，按 [references/listing-contract.md](references/listing-contract.md)
+   从 README / PRD / `*.xcstrings` / Fastfile / Snapfile 抽取，并让用户确认）。
+2. 抓图走项目的 snapshot lane（**不要** frameit——机身由美化工程画）：
+
+   ```sh
+   # Fastfile 里的关键三项，缺一项就会抓到不确定的东西
+   capture_languages(...)      # 语言来自档案/配置，不要手抄
+   capture_devices(...)        # 来自 DEV_*，不要手抄
+   # 并发必须关：Xcode 会复用同一个模拟器，两个语言区同时跑会互相污染
+   sh "xcodebuild test ... -parallel-testing-enabled NO ..."
+   ```
+
+   `Snapfile` / `Fastfile` 的写法、`clear_previous_screenshots` 的坑、部分重跑
+   （`ODM_SHOT_MODE` 那类逃生开关）、九语种子库准备，见
+   [references/snapfile-fastfile.md](references/snapfile-fastfile.md) 与
+   [references/multilocale-batch.md](references/multilocale-batch.md)。
+
+3. 折叠设备要摆姿态：`duoctl` 展开内屏 → **等画面真的转过去** → 再判定 →
+   然后再启动 UI 测试。`rotate` 返回成功但画面没转是常态，此时抓到的整批都是外屏尺寸。
+   完整时序见 [references/foldable-and-multishot.md](references/foldable-and-multishot.md)。
+
+4. **门：收货门。**
+
    ```bash
-   python3 <skill>/resources/scripts/inject_screenshots.py \
+   python3 scripts/verify_shots.py \
+     --root "$DEV_SHOTS_DIR" --pattern "<前缀>-*.png" \
+     --expect-size "${DEV_PIXELS%% *}" --expect-count 6 \
+     --since "$RUN_STARTED_AT"
+   ```
+
+   四类判据一次判死，不需要人眼看图：**张数**（少一张 = 某个分支没进）、
+   **尺寸**（抓错设备的唯一症状）、**mtime**（同尺寸的旧文件）、
+   **跨区 md5 互异**（切了语言但没真生效，九区一模一样）。
+   有区不合格就停，不要"先跑完再一起看"。
+
+抓图阶段的硬故障（xcodebuild 残留锁 / 模拟器 Invalid state / 系统权限弹窗挡住点击 /
+按本地化文案定位控件导致某区静默少图 / 拿旧二进制验收改动）逐条写在
+[references/gotchas-deadlock.md](references/gotchas-deadlock.md)，
+遇到"跑不动"或"少图"先查那里，不要重新设计流程。
+
+## 阶段 2 — 注入与美化工程
+
+1. 目标 `<app-root>/app-store-screenshots/`。不存在就从
+   `resources/template/app-store-screenshots/` 拷一份进去，并写 `.gitignore`
+   （边界见 [references/git-boundary.md](references/git-boundary.md)）。
+2. `listing.json` → `app-store-screenshots/app-store-screenshots.json`。
+   **非目标设备要显式写成 `[]`**，不要省略：引擎是 `{...defaults, ...yours}` 合并，
+   省略的设备会带着 starter 幻灯片回来，指向不存在的图片。
+3. 注入（不要用 `cp`）：
+
+   ```bash
+   python3 scripts/inject_screenshots.py \
      --scaffold app-store-screenshots \
-     --src fastlane/screenshots \
-     --device iphone \
-     --slugs 01-on-this-day,02-journey-map,03-journey-home,04-memory,05-poster,06-photo-detail \
-     --src-pattern "APP-6.9-{slug}.png"     # 源文件名不是 <slug>.png 时用它
+     --src "$DEV_SHOTS_DIR" --device "$DEV_EDITOR_DEVICE" \
+     --slugs 01-on-today,02-journey-map,03-journey-home,04-memory,05-poster,06-photo-detail \
+     --src-pattern "<前缀>-{slug}.png" \
+     --expect-size "${DEV_PIXELS%% *}" --dry-run
    ```
-   - Source: `fastlane/screenshots/<locale>/<device>-<NN>.png` (or the user-provided dir).
-   - Dest: `TARGET/public/screenshots/<platform>/<device>/<locale>/<NN>.png`, where
-     `platform` = `apple` for `iphone`/`ipad`/`watch-45mm` and `android` for `android*`.
-   - Preserve the numeric `<NN>` order. After copying, verify size **and** md5 against the
-     source — a stale file from a previous run has the right name and the wrong pixels.
-   - Set the non-target devices to `[]` in the config rather than leaving them out: the
-     engine merges `slidesByDevice` with `DEFAULT_PROJECT` (`{...defaults, ...yours}`), so an
-     omitted device silently comes back filled with starter slides pointing at images that do
-     not exist.
-5. **Non-destructive re-entry.** If `TARGET/app-store-screenshots.json` already exists
-   (the skill ran before), **do not overwrite it**. Only re-copy screenshots when the user
-   explicitly asks ("refresh screenshots only"). All manual edits persist.
 
-## Stage 3 — Launch + hand off
+   四道门：**张数**、**尺寸**、**跨区同格尺寸一致**（防"一半内屏一半外屏"）、
+   **覆盖保护**（目标已存在且像素不同，必须显式 `--force`）。
+   幻灯片文案必须来自项目自己的分镜文档，不要临场编——图和文案会各走各的，
+   等上传完才发现对不上。
 
-1. Detect runtime: `bun --version`. If present →
-   `cd TARGET && bun install && bun run dev`. Otherwise →
-   `npm install && npm run dev`. (If `next dev` dies with a `safe-delete` denial, use the
-   clean-environment recipe in the editor failure catalogue, item 0.)
-2. Wait for the dev server (poll the port Next reports, default 3000). Open the URL for
-   the user. **`curl` returning 200 is not proof the editor works** — hydration runs
-   client-side, so a page that throws on first render still answers 200. Prove it with a real
-   browser before handing off:
-   ```bash
-   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-     --headless=new --disable-gpu --virtual-time-budget=8000 --dump-dom \
-     http://127.0.0.1:3000/ > /tmp/dom.html
-   grep -cEi "Unhandled Runtime Error|TypeError|Application error" /tmp/dom.html   # 必须 0
-   grep -c "<任一 slide 的真实文案>" /tmp/dom.html                                  # 必须 >0
-   ```
-   A DOM in the tens of MB is normal — the canvas inlines every PNG as a `data:` URI
-   (compare `grep -o "<img"` against `grep -o "data:image"`).
-3. **The skill ends here.** Tell the user:
-   - Fine-tune copy, layout, and theme in the browser. This is repeatable — reopen the URL
-     any time; edits persist in `app-store-screenshots.json`.
-   - Export promotion screenshots with the editor's export button.
-   - Optionally publish to App Store Connect with fastlane in their own terminal. The skill
-     does not do this.
+4. **非破坏性重入**：`app-store-screenshots.json` 已存在时**绝不覆盖**。
+   只有用户明确说"只刷新图"时才只重拷图片，手工排版全部保留。
 
-## Stage 4 — Publish handoff (prepare, never execute)
-
-After the user exports, two independent pushes exist. The skill **prepares** both and
-**stops before any write to App Store Connect**.
-
-### 4a. Screenshots → ASC
+## 阶段 3 — 编辑器跑起来
 
 ```bash
-# 1. 尺寸必须逐张核（槽位写错 → 商店页显示旧图）
-sips -g pixelWidth -g pixelHeight exports/<locale>/*.jpg
-
-# 2. 先看删除清单，再真跑（--replace 是先删后传）
-asc screenshots upload --app "<APP_ID>" --version "<VER>" \
-  --device-type IPHONE_67 --path exports/ --replace --dry-run
-asc screenshots upload ... --replace --confirm
-
-# 3. 唯一验收 = 回读
-asc screenshots list --app "<APP_ID>" --version "<VER>"
+cd app-store-screenshots && bun install && bun run dev
+# 没有 bun：npm install && npm run dev
 ```
 
-- **槽位要对**：iPhone 16 Pro Max 在 App Store 取 **6.9"**（1320×2868 = `APP_IPHONE_67`）；
-  只写进 `APP_IPHONE_65` 会导致真机商店页仍显示旧套装（真实事故）。
-- 每个 locale 的张数必须一致；少一张 = 该区某帧被静默跳过。
-- `--replace` 必须带 `--confirm`，且执行前先 `--dry-run` 读删除清单。
-
-### 4b. Metadata → ASC
-
-若项目有 `asc-metadata/` 三目录（`metadata/` 编辑源 → `canonical/` 推送物 →
-`live/` 只读快照），按顺序走，**每一步都停下给用户看 diff**：
+**`curl` 返回 200 不是证据。** 渲染发生在客户端，水合阶段崩掉的页面照样回 200。
+必须用真浏览器看 DOM：
 
 ```bash
-python3 asc-metadata/scripts/txt2canonical.py --version "<VER>"
-asc metadata validate --dir ./asc-metadata/canonical          # valid: true 才继续
-asc metadata plan --app "<APP_ID>" --version "<VER>" \
-  --dir ./asc-metadata/canonical --if-exists update \
-  --review-dir .asc/metadata/review --output table            # 逐条读 from，不只看 to
-asc metadata approve --review-dir .asc/metadata/review --all  # 用户批准后才执行
-asc metadata apply ... --dry-run                              # 再确认一次
-asc metadata apply ...
-asc metadata pull --app "<APP_ID>" --version "<VER>" --dir /tmp/verify --force  # 唯一验收
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --disable-gpu --virtual-time-budget=8000 --dump-dom \
+  http://127.0.0.1:3000/ > "$TMPDIR/dom.html"
+grep -cEi "Unhandled Runtime Error|TypeError|Application error" "$TMPDIR/dom.html"  # 必须 0
+grep -c "<某一格的真实文案>" "$TMPDIR/dom.html"                                    # 必须 >0
 ```
 
-三条不可违反的约束：`--if-exists update` 必填（默认 `fail`）；**绝不加
-`--allow-deletes`**（会删掉本地未覆盖的所有语言区）；`apply` 报 `plan drifted` ≠ 没写入
-（drift 校验在写入之后），**唯一可信验收是 `pull` 回读逐字段比对**。
+DOM 几十 MB 属正常：画布把每张 PNG 内联成 `data:` URI。
 
-### 4c. 交付物
+起不来 / 白屏 / 整页报错这三类占了全部故障，都在
+[references/editor-runtime.md](references/editor-runtime.md)：`next dev` 被沙箱拦住
+删除 `.next` 而 2 秒退出、`raw.startsWith is not a function` 这类跨脚手架共享
+localStorage 导致的水合崩溃、以及"验证服务器活着"的正确姿势。
 
-给用户一张「现在能做什么」的清单，而不是笼统的"准备好了"：
+**门**：真浏览器 DOM 里运行时错误 0 且真实文案 >0。这两条都过了才交给人微调。
+微调是反复的，交出去之后用户随时可以重开地址，改动持久化在 JSON 里。
 
-| 项 | 内容 |
+## 阶段 4 — 导出与 staging
+
+编辑器导出后得到一棵按尺寸分的树。整理成 ASC 能直接吃的形状，靠一个脚本而不是手工搬：
+
+```bash
+bash scripts/stage_beautified.sh <导出目录或 zip> \
+  --asc-type "$DEV_ASC_TYPE" --size-dir "$DEV_EXPORT_SIZE" --per-locale 6 \
+  --app-id "$APP_ID" --version "$VERSION" \
+  --project <App>.xcodeproj --bundle-id <bundle id> \
+  --out "$DEV_BEAUTIFIED_DIR"
+```
+
+它做四件事，每一件都是真实踩过的：
+
+1. **语言码映射**：ASC 用的是 `en-US` / `de-DE` / `pt-BR` 这套，工程里常写 `en` / `de` / `pt`。
+   目录名不对，ASC 的 fan-out 上传会**静默少传**，不报错。
+2. **槽位与尺寸硬门**：`--asc-type` 与 `--size-dir` 必须与档案一致；写错槽位则商店页
+   继续显示旧套装。
+3. **张数硬门**：每区张数必须等于 `--per-locale`。
+4. **版本号认领**：给了 `--project` + `--bundle-id` 时从 pbxproj 里按 bundle id 精确取版本，
+   避免拿错版本去推。
+
+槽位与像素的对应关系、以及"为什么 Duo 是独立槽而不是塞进 6.9 寸"，见
+[references/publish-asc.md](references/publish-asc.md) 与
+[references/inject-and-engine.md](references/inject-and-engine.md)。
+
+## 阶段 5 — 推截图与推文案
+
+### 5a. 截图
+
+```bash
+# 先看清单（--replace 是先删后传，必须先读删除清单）
+asc screenshots upload --app "$APP_ID" --version "$VERSION" \
+  --device-type "$DEV_ASC_TYPE" --path "$DEV_BEAUTIFIED_DIR" --replace --dry-run
+
+# 确认后真跑；或直接交给 stage_beautified.sh --upload [--confirm]
+```
+
+三个实测坑，都可能让你以为"上传失败"其实只是姿势不对：
+
+- **单张 checksum 结算超时**：`context deadline exceeded`。
+  `ASC_TIMEOUT=180s` 重跑，并用 `--resume <failures-*.json>` 只补失败那张，
+  不要整批重来。
+- **单区模式不接受 `--confirm`**：`--locale` 单区补传时报
+  `--confirm only applies to --replace`。单区就是不带 `--confirm`。
+- **别用 `set -e` 逐区跑**：首区失败会让后面所有区一区未传，看起来像"全失败"，
+  实际是"全没跑"。要么一次跑完，要么单区单独跑并逐区记账。
+
+**验收只有一件事**：`asc screenshots list` 回读，每区张数一致、槽位正确。
+
+### 5b. 文案
+
+有 `asc-metadata/` 三目录（`metadata/` 编辑源 → `canonical/` 推送物 → `live/` 只读快照）
+就按五步走，一个脚本跑完并当场回读：
+
+```bash
+# 只看计划：新增/更新/删除各几条，逐条读 from
+bash scripts/publish_asc.sh --app-id "$APP_ID" --version "$VERSION" --dir asc-metadata/canonical
+
+# 确认后真推：validate → plan → approve → apply → pull 回读逐字段比对
+bash scripts/publish_asc.sh --app-id "$APP_ID" --version "$VERSION" \
+  --dir asc-metadata/canonical --confirm
+```
+
+三条不可违反：`--if-exists update` 必填（默认 `fail` 会让整批中断，一半推了一半没推）；
+**绝不传 `--allow-deletes`**（会删掉本地没覆盖的所有语言区）；
+`apply` 报 `plan drifted` **不等于没写入**（drift 校验跑在写入之后），
+不去重跑，直接 `pull` 回读——**回读逐字段比对是唯一可信的验收**。
+
+**新建版本不继承 `whatsNew` 与 `promotionalText`**（继承的是 `description` / `keywords`）。
+所以新版本必须显式写这两个字段，否则提交会被"缺少更新说明"拦下。
+
+`whatsNew` 只写用户看得见的结果：展开后排版不同、旋转后重排；不写列数、像素、
+组件名、内部修复项。三句话封顶：一句说改了什么，两条说能感受到什么，一句兜底。
+
+## 硬性禁止
+
+- 不在非 macOS 上假装能抓图。
+- 不用 `cp` 代替注入脚本，不用 `--allow-deletes`，不省略 `--if-exists update`。
+- 不覆盖用户已经手工调过的 `app-store-screenshots.json`。
+- 不因为 `curl` 200 就宣称编辑器可用。
+- 不在抓图循环里用 `set -e` 逐区跑。
+- 不拿屏幕宽度当折叠姿态的判据。
+- 不把"跳过的门"写成"通过"。
+
+## 文件索引
+
+| 文件 | 讲什么 |
 |---|---|
-| 编辑器地址 | `http://localhost:<port>`（可反复打开，改动持久化在 JSON） |
-| 待导出内容 | N 个 locale × M 格，槽位与尺寸 |
-| 截图上传命令 | 完整 `--dry-run` + `--confirm` 两条 |
-| 文案推送命令 | `validate` / `plan` / `approve` / `apply` / `pull` 五条 |
-| 审批门 | 哪些动作需要用户按确认（`--confirm`、`approve`） |
+| `scripts/check_environment.py` | 四态体检 |
+| `scripts/device_profile.sh` | 设备身份唯一出口 |
+| `scripts/verify_shots.py` | 抓图收货门（四判据） |
+| `scripts/inject_screenshots.py` | 注入四门 |
+| `scripts/stage_beautified.sh` | 导出树 → ASC 上传树 + 硬门 |
+| `scripts/publish_asc.sh` | 文案五步 + 回读验收 |
+| `scripts/probe_environment.py` | 环境探针（被体检调用） |
+| `resources/device-profiles.example.json` | 设备档案样例，拷到项目里改值 |
+| `resources/template/app-store-screenshots/` | 美化工程模板（Next.js + 设备机身 + 版式） |
 
-## Stage 5 — Asset Library / PPO / CPP (beyond this pipeline, ASC-side)
+references 里按问题域分，遇到具体问题再翻，不要顺序通读：
 
-本 skill 的出口（美化后截图 + 默认页元数据）只是 2026 年 ASC「增长和营销」流水线的**上游原料**。
-它**不覆盖**以下三步，且当前第三方 asc CLI 也不覆盖——它们只能走 **ASC 网页后台或 App Store Connect API**：
-
-### 5a. 素材库 Asset Library（必须先接入）
-
-把 Stage 3 导出的 6.9" 美化截图（按语言）上传到素材库，作为**唯一素材源**。核心价值：
-- **独立提审（无需发版）**——换季节/活动素材不用发二进制，对发版不频繁的独立开发者最值钱。
-- 同一套素材被默认页、CPP、PPO、App 内活动复用，所以**只出 6.9" 单尺寸仍成立**（PPO/CPP 复用同尺寸，无需新增设备帧）。
-- 2026 还新增 **Creative Assets（头部横幅 / 搜索结果创意）**——可在素材库存独立图片/视频，用于产品页顶部与搜索结果位；这超出了"截图"范畴，是**额外的创意生产工作**，优先级排在截图→PPO 之后。
-
-### 5b. 产品页面优化 PPO（免费，优化自然流量主渠道）
-
-默认页原生 A/B 测试：最多 **3 方案**随机分给默认页**有机访客**，测截图/预览/图标/头部创意，
-看转化率与**≥90% 置信度**后再"应用"为默认页（最长 90 天，建议 ≥4 周、每方案 ≥2,500 次展示）。
-对偏自然流量的 app 是性价比最高的免费杠杆；**薄流量时不要拆 3 个噪声方案**，1 方案 + 原版更有信息量。
-治疗方案按语言拆，本 pipeline 的 9 语言覆盖直接复用。
-
-### 5c. 自定产品页面 CPP（条件触发：付费/外链投放才划算）
-
-最多 **70** 个带独立 URL 的平行页（**上限非目标，独立开发者 2–5 个足够**），可绑关键词在搜索中替代默认页；
-**仅被"点链接 / 搜指定词"的人看到，不进自然浏览**——所以只有启动 Apple Ads / 社媒 / 达人 / 被推荐时才值得做。
-PPO 与 CPP **不可混淆**：PPO 测默认页（有机），CPP 是目的地（付费/URL），报告口径要分开。
-
-### 5d. 配套工具
-
-- **产品页面预览工具**：发布前跨语言/深色模式/横竖屏/iPhone·iPad 预览渲染，降低反复提审与"某设备显示异常"成本——对应本 pipeline 的"无视觉能力时验收"痛点（见 §5.5）。
-- **地域节奏**：这些功能 2026-06-08 先在美国英语区上线、逐步扩展，**动手前逐 storefront 确认目标语言区已可用**。
-
-> 红线：本 skill 与 asc CLI **绝不自动建 CPP / 提审 PPO / 写素材库**；这些留给用户在 ASC 后台或 API 手动完成。
-> 参考评估归档：`OneDayMemory/docs/ASC_2026_营销功能影响评估.md`。
-
-## Hard limits (never do)
-
-- Never run export.
-- Never run `fastlane deliver` or any App Store Connect publishing.
-- Never overwrite the user's `app-store-screenshots.json` on re-entry.
-- Never pretend capture works on a non-Mac machine.
-
-## File asset & git boundary (ADR-002)
-
-Track: `listing.json`, `app-store-screenshots/app-store-screenshots.json`,
-`app-store-screenshots/bun.lock` / `package.json` / `next.config.*` / `tsconfig.json`,
-and the app repo's fastlane config + UI test source + `Gemfile`.
-
-Ignore: `fastlane/screenshots/**/*.png` (regenerable), `app-store-screenshots/node_modules/`,
-`.next/`, `public/screenshots/`, `exports/`, `src/` (regenerated by this skill), `.env`,
-`*.p8`. Full `.gitignore` snippets are in `references/git-boundary.md`.
-
-## Bundled engine
-
-`resources/template/app-store-screenshots/` is a self-contained Next.js + ShadCN editor
-that reads `app-store-screenshots.json` and `public/screenshots/**` and exports at every
-Apple/Google-required resolution via `modern-screenshot`. It is regenerated by this skill,
-so `src/` is intentionally git-ignored in scaffolds. The engine's device frames, theme
-presets, and per-locale editing are the beautify surface the user interacts with.
-
-## Stage-1 failure catalogue (verified on a real run)
-
-These are **hard failures, not slowness**. Diagnose them in this order before re-running;
-each costs a full capture cycle if missed.
-
-1. **Orphaned `xcodebuild` from an interrupted run holds the `DerivedData` lock.**
-   Symptom: `xcodebuild -showBuildSettings` times out repeatedly (3/6/12/24s retries all
-   exhausted), fastlane dies before any test runs. Check
-   `ps aux | grep "xcodebuild -scheme"`. Fix: `pkill -9 -f "xcodebuild -scheme <Scheme>"`.
-2. **Simulator in `Invalid device state`** (Mach error -308, `ipc/mig server died`), often
-   after force-killing the above; symptoms include `Failed to launch … xctrunner` and
-   result-bundle save errors (`mkstemp: No such file or directory`). Fix:
-   `simctl shutdown` → `erase` → `boot` → `bootstatus -b`. Verify the frame buffer is
-   *live* by taking two `simctl io screenshot`s and requiring **different md5s** — an
-   identical md5 means a frozen buffer, not a slow boot.
-3. **A system permission alert (SpringBoard window) blocks every tap.** On the first launch
-   after a fresh install the app's notification prompt covers the app, so its elements are
-   `exists == true` but `isHittable == false` → `tap()` fails with "Failed to … not
-   hittable". `addUIInterruptionMonitor` does **not** fire here (it only engages when
-   XCUITest classifies an *unexpected* alert; this failure surfaces in the hittability
-   check). Fix: explicitly dismiss SpringBoard alerts before interacting —
-   `XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts` — and select the
-   button **by index (0 = deny)**, because the alert is localized to the *system* language,
-   not the app's `-AppleLanguages`. Confirm the diagnosis by reproducing a fresh install
-   manually (`simctl install` + `simctl launch`) and looking at a `simctl io screenshot`.
-4. **A silently missing screenshot.** Any UI-test lookup keyed on a localized `label`
-   (or on an SF Symbol name, which never reaches the accessibility identifier) will match
-   in English only, while the other locales skip that snapshot inside an `if` — no error,
-   no failure, just a shorter set. Always locate controls by an explicit,
-   language-independent `accessibilityIdentifier`, and cross-check that **every locale
-   produced the same file count** before declaring the capture done.
-5. **An un-gated locale loop.** `for l in de es fr …; do capture $l; done` keeps running
-   after a locale fails, so a defect costs one investigation *per remaining locale*. Gate
-   each locale: test-succeeded + file count + mtime newer than the run start + per-frame
-   `md5` differs across locales (proves localization actually applied). Stop the whole
-   batch on the first red locale.
-6. **Verifying a code fix against a stale binary.** The capture script runs UI tests only;
-   it does **not** build the app, so screenshots come from whatever is installed. After any
-   app-source change, run `install_and_grant` (or equivalent) first, and require two pieces
-   of evidence: the product binary's mtime, and a `Compiling <File>.swift` line in the build
-   log. Only then does "pixel-identical before/after" mean anything — otherwise it means
-   "the fix never shipped to the simulator".
-7. **Copy invented at the injection step.** Slide `label`/`headline` per locale must come
-   from the project's own storyboard document (e.g. `docs/ASC_<ver>_截图分镜与文案.md`),
-   never re-authored ad-hoc. A capture set and its copy drift apart silently otherwise, and
-   the mismatch surfaces only after upload.
-
-### Invocation & re-run ergonomics
-
-- `bundle exec fastlane …` requires a `Gemfile`; when the repo has none, use the bare
-  `fastlane` binary. Check `ls Gemfile*` before choosing.
-- Add a partial-run escape hatch to the `Snapfile` (e.g. read an env var for the language
-  list) so one flaky locale can be retried in ~3 min instead of re-running the whole
-  matrix. When running partially, **disable `clear_previous_screenshots`** or the already
-  captured locales are wiped. In a `Snapfile`, do not name your own constants after
-  fastlane's (`ALL_LANGUAGES` collides with `ConfigurationFile`'s).
-- A stale `.next` can stop `next dev` from booting: Next calls `recursiveDelete`, which a
-  host safety guard may refuse (`SAFE_DELETE_BULK_CONFIRM_REQUIRED`). **Move** the directory
-  out of the repo (`mv .next /tmp/…`) instead of deleting it.
-
-## Editor runtime failure catalogue
-
-0. **`next dev` dies at `Starting...` with `[safe-delete] broker denied delete:
-   path=…/.next/types`.** `next dev`'s hot-reloader calls `recursiveDelete(".next")` on every
-   boot, and an agent sandbox that brokers file deletion refuses it. Moving `.next` out of the
-   tree (the older advice in *Invocation & re-run ergonomics*) is **not sufficient** — Next
-   recreates `.next/types` seconds later and deletes it again, so the crash repeats with a
-   brand-new timestamp. The process exits ~2s after `✓ Starting...`, `curl` returns 000, and
-   `lsof -iTCP:3000` shows nothing listening.
-
-   Fix — launch with the deletion shim out of the environment *and* a PATH that does not
-   shadow the real `node`:
-   ```bash
-   cd app-store-screenshots && mv .next /tmp/asc-next-$(date +%s) 2>/dev/null
-   env -u NODE_OPTIONS \
-       -u CODEBUDDY_SAFE_DELETE_BROKER_DELETE \
-       -u CODEBUDDY_SAFE_DELETE_REPORT_PATH \
-       -u CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR \
-       PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-       /usr/bin/env node ./node_modules/next/dist/bin/next dev -H 127.0.0.1 -p 3000
-   ```
-   Bind explicitly to `127.0.0.1` — Next's default is a wildcard bind. Verify with
-   `curl --noproxy '*' -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/` (expect 200)
-   **and** `lsof -nP -iTCP:3000 -sTCP:LISTEN` (expect `127.0.0.1:3000`, not `*:3000`).
-
-   Do **not** conclude "the port is busy" from a `502`: a system HTTP proxy answers 502 for a
-   port with nothing listening, and `curl --noproxy '*'` returns 000 in the same state. `502`
-   from curl means *the proxy* refused, not that your server is half-up.
-
-1. **`TypeError: raw.startsWith is not a function` — the editor is replaced by the Next dev
-   error overlay the moment `localhost:3000` opens.** `raw` is `slide.screenshot`, which the
-   schema declares as `string` but which arrived as a `LocalizedText` object
-   (`{en, zh, ja}`). It throws in the `assetPaths` memo of
-   `src/components/editor/screenshot-editor.tsx` — the only site in the whole tree (engine +
-   `node_modules`) that calls `raw.startsWith("data:")`.
-
-   Two facts make this arrive as a *whole-page* crash rather than a glitch:
-   - Hydration is **localStorage first (instant paint) → project file overwrites**, and
-     `assetPaths` is computed on the **first render** ⇒ it throws on the cached state before
-     the on-disk JSON can rescue anything. **`curl` returning HTTP 200 is not evidence that
-     the page works** — a client-side hydration crash never shows up in the HTTP status.
-   - **Every scaffold generated by this skill on the same machine shares
-     `http://localhost:3000` *and* the same `STORAGE_KEY`**, so localStorage is shared across
-     projects. Scaffolds generated at different times have **incompatible `screenshot`
-     schemas** — older ones declare `screenshot: string`, newer ones `screenshot:
-     LocalizedText`. A cache written by the newer engine and read by the older one is exactly
-     this crash. (The reverse is safe: the newer `migrateSlide` coerces with
-     `coerceLocalized`, turning a legacy string into `{en: …}`.)
-
-   Fix pattern — finish the field-coercion the storage layer already started (`label` and
-   `headline` were coerced, `screenshot`/`screenshotSecondary` were **not**):
-
-   ```ts
-   function coerceScreenshot(value: unknown): string {
-     return pickText(coerceLocalized(value), DEFAULT_LOCALE);
-   }
-   ```
-
-   applied to both fields inside `migrateSlide`. **Rule: anything parsed at a boundary
-   (localStorage, a file, an API) must be coerced to the declared type — never trust it to
-   already be that type.** Verify the coercion is a *correct degradation* rather than a silent
-   blank, not merely that the crash is gone: seed the dirty state via Playwright
-   `addInitScript`, abort `**/api/project` so the cache is the only source, and assert the
-   browser really requests the seeded image path. Do not probe "did the page render?" with a
-   text selector on `appName` — it is the **value** of a controlled `<input>`, not a text node.
-
-
+- 契约与设备：[listing-contract.md](references/listing-contract.md) ·
+  [listing-and-devices.md](references/listing-and-devices.md)
+- 抓图：[snapfile-fastfile.md](references/snapfile-fastfile.md) ·
+  [multilocale-batch.md](references/multilocale-batch.md) ·
+  [foldable-and-multishot.md](references/foldable-and-multishot.md) ·
+  [demo-data-builder.md](references/demo-data-builder.md)
+- 美化：[inject-and-engine.md](references/inject-and-engine.md) ·
+  [editor-runtime.md](references/editor-runtime.md)
+- 上传：[publish-asc.md](references/publish-asc.md)
+- 排障：[gotchas-deadlock.md](references/gotchas-deadlock.md)
+- 环境与边界：[setup-guide.md](references/setup-guide.md) ·
+  [git-boundary.md](references/git-boundary.md)

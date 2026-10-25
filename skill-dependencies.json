@@ -1,0 +1,313 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    "capture",
+    "beautify",
+    "verify",
+    "publish-screenshots",
+    "publish-metadata"
+  ],
+  "dependencies": [
+    {
+      "id": "macos-xcode",
+      "type": "runtime",
+      "required": true,
+      "auth_type": "none",
+      "capabilities": ["capture", "verify"],
+      "checks": [
+        { "id": "xcodebuild-present", "type": "cli", "required": true, "command": "xcodebuild" },
+        { "id": "sips-present", "type": "cli", "required": true, "command": "sips" },
+        { "id": "simulator-runtime", "type": "cli_probe", "required": true, "target": "xcrun simctl list runtimes" }
+      ],
+      "setup": {
+        "official_home_url": "https://developer.apple.com/xcode/",
+        "official_docs_url": "https://developer.apple.com/documentation/xcode",
+        "steps": [
+          "从 App Store 安装 Xcode",
+          "sudo xcode-select -s /Applications/Xcode.app",
+          "Xcode → Settings → Components 下载所需 iOS runtime",
+          "验证：xcrun simctl list runtimes 能看到该 runtime"
+        ],
+        "verify": "xcodebuild -version 正常输出，且 xcrun simctl list runtimes 含目标版本",
+        "security": "只读检查命令存在与 runtime 列表，不启动模拟器、不修改 Xcode 配置",
+        "verified_at": "2026-10-25",
+        "applies_to_version": "Xcode 27.1"
+      },
+      "degradation": [
+        {
+          "capability": "capture",
+          "trigger": "非 macOS，或无 Xcode，或无可用 iOS runtime",
+          "fallback": "跳过抓图，直接用手工放置的无框 PNG 进入注入与美化",
+          "user_input": "无框截图目录（按 <locale>/ 分）与每区张数",
+          "limitations": "无法验证截图是否来自当前代码，也无法自动断言本地化生效",
+          "evidence_label": "部分验证",
+          "recovery": "在装有 Xcode 的 macOS 上重跑抓图阶段",
+          "stop_condition": "既不能抓图也没有可用的手工截图时停止，不生成空工程"
+        },
+        {
+          "capability": "verify",
+          "trigger": "缺少 sips",
+          "fallback": "用 python3 的 PIL 读尺寸；两者都不可用时只核对张数与 md5",
+          "user_input": "",
+          "limitations": "尺寸门失效，抓错设备可能漏检，输出标记为未验证尺寸",
+          "evidence_label": "部分验证",
+          "recovery": "补齐 PATH 到 /usr/bin 让 sips 可见",
+          "stop_condition": "尺寸门与张数门都不可用时停止，不宣称截图通过"
+        }
+      ]
+    },
+    {
+      "id": "fastlane",
+      "type": "cli",
+      "required": true,
+      "auth_type": "none",
+      "capabilities": ["capture"],
+      "checks": [
+        { "id": "fastlane-present", "type": "cli", "required": true, "command": "fastlane" },
+        { "id": "fastlane-version", "type": "cli_probe", "required": true, "target": "fastlane --version" }
+      ],
+      "setup": {
+        "official_home_url": "https://fastlane.tools",
+        "official_docs_url": "https://docs.fastlane.tools",
+        "steps": [
+          "gem install fastlane",
+          "项目有 Gemfile 时改用 bundle install，并一律 bundle exec fastlane",
+          "验证：fastlane --version"
+        ],
+        "verify": "fastlane --version 输出版本号；ls Gemfile* 决定用裸命令还是 bundle exec",
+        "security": "仅执行版本查询；不运行 lane，不触碰 App Store Connect",
+        "verified_at": "2026-10-25",
+        "applies_to_version": "fastlane 2.x"
+      },
+      "degradation": [
+        {
+          "capability": "capture",
+          "trigger": "fastlane 未安装",
+          "fallback": "改用 xcodebuild test 直接跑 UI 测试并自行写出 language/locale 输入文件",
+          "user_input": "工程的 scheme 名与 UI 测试 target 名",
+          "limitations": "失去 snapshot 的重试与并发编排，需自行处理收货目录",
+          "evidence_label": "推断",
+          "recovery": "安装 fastlane 后回到标准抓图流程",
+          "stop_condition": "既无 fastlane 也无法直调 xcodebuild 时停止"
+        }
+      ]
+    },
+    {
+      "id": "bun-node",
+      "type": "runtime",
+      "required": true,
+      "auth_type": "none",
+      "capabilities": ["beautify"],
+      "checks": [
+        { "id": "bun-or-node", "type": "cli_probe", "required": true, "target": "bun 或 node 任一可用" }
+      ],
+      "setup": {
+        "official_home_url": "https://bun.sh",
+        "official_docs_url": "https://bun.sh/docs",
+        "steps": [
+          "安装 bun：curl -fsSL https://bun.sh/install | bash",
+          "没有 bun 时用 Node 20+ 与 npm run dev",
+          "验证：bun --version"
+        ],
+        "verify": "bun --version 或 node --version 至少其一成功",
+        "security": "只查询版本，不安装依赖、不写工程文件",
+        "verified_at": "2026-10-25",
+        "applies_to_version": "bun 1.x / Node 20+"
+      },
+      "degradation": [
+        {
+          "capability": "beautify",
+          "trigger": "bun 与 node 都不可用",
+          "fallback": "交付已注入好的工程与配置文件，用户自备运行时后自行启动",
+          "user_input": "",
+          "limitations": "无法在本地预览或导出，产物停留在工程状态",
+          "evidence_label": "部分验证",
+          "recovery": "安装 bun 或 Node 后重跑启动阶段",
+          "stop_condition": "需要当场验证渲染效果但运行时不可用时停止，不宣称编辑器可用"
+        }
+      ]
+    },
+    {
+      "id": "asc-cli",
+      "type": "cli",
+      "required": false,
+      "auth_type": "none",
+      "capabilities": ["publish-screenshots"],
+      "checks": [
+        { "id": "asc-present", "type": "cli", "required": false, "command": "asc" },
+        { "id": "asc-version", "type": "cli_probe", "required": true, "target": "asc --version" }
+      ],
+      "setup": {
+        "official_home_url": "https://github.com/rorkai/asc",
+        "official_docs_url": "https://github.com/rorkai/asc#readme",
+        "steps": [
+          "brew install asc",
+          "验证：asc --version",
+          "PATH 不含 /opt/homebrew/bin 时用绝对路径或补 PATH"
+        ],
+        "verify": "asc --version 正常输出",
+        "security": "只查询版本，不触发任何写操作",
+        "verified_at": "2026-10-25",
+        "applies_to_version": "asc 5.16.0"
+      },
+      "degradation": [
+        {
+          "capability": "publish-screenshots",
+          "trigger": "asc 未安装",
+          "fallback": "输出整理好的上传树与逐条手动上传步骤，由用户在 ASC 后台完成",
+          "user_input": "无",
+          "limitations": "无法自动化上传与回读验收，需用户自行核对槽位与张数",
+          "evidence_label": "部分验证",
+          "recovery": "安装 asc 后重跑上传阶段",
+          "stop_condition": "用户要求自动上传但 CLI 缺失时停止，不模拟上传结果"
+        }
+      ]
+    },
+    {
+      "id": "app-store-connect",
+      "type": "api",
+      "required": false,
+      "auth_type": "api-key",
+      "capabilities": ["publish-screenshots", "publish-metadata"],
+      "checks": [
+        { "id": "asc-auth", "type": "auth_probe", "required": true, "target": "asc auth doctor" }
+      ],
+      "setup": {
+        "official_home_url": "https://developer.apple.com/app-store-connect/",
+        "official_docs_url": "https://developer.apple.com/documentation/appstoreconnectapi",
+        "credential_url": "https://appstoreconnect.apple.com/access/integrations/api",
+        "login_url": "https://appstoreconnect.apple.com/login",
+        "console_path": [
+          "Users and Access → Integrations → App Store Connect API → 生成密钥",
+          "需要 App Manager 或 Admin 角色"
+        ],
+        "scopes": [
+          "App Manager 或 Admin（截图与元数据写入）"
+        ],
+        "credential_storage": "asc 自己管理的系统钥匙串；.p8 放仓库外（如 ~/.private_keys），权限 0600",
+        "steps": [
+          "在 Integrations 页面生成 API 密钥（.p8 只能下载一次）",
+          "把 .p8 移到仓库外并 chmod 600",
+          "asc auth login --key-id … --issuer-id … --private-key …",
+          "验证：asc auth doctor 无 issue",
+          "不要设置 ASC_BYPASS_KEYCHAIN，它会让钥匙串被跳过、看起来像未登录"
+        ],
+        "verify": "asc auth doctor 显示凭据 OK；asc status --app <ID> 能返回版本与构建",
+        "rotate_or_revoke": "在同一 Integrations 页面 Revoke 旧密钥并生成新密钥，重新 asc auth login；撤销立即生效",
+        "security": "凭据只进系统钥匙串；不写进仓库、不写进任何 skill 文件、不在对话中回显",
+        "verified_at": "2026-10-25",
+        "applies_to_version": "App Store Connect API 2026"
+      },
+      "degradation": [
+        {
+          "capability": "publish-screenshots",
+          "trigger": "认证失效或权限不足",
+          "fallback": "停在 staging 产物，输出上传树与手动步骤",
+          "user_input": "无",
+          "limitations": "无法回读验收，线上状态未知",
+          "evidence_label": "部分验证",
+          "recovery": "重新生成密钥并 asc auth login，然后重跑上传",
+          "stop_condition": "需要确认线上状态才能继续的步骤一律停止"
+        },
+        {
+          "capability": "publish-metadata",
+          "trigger": "认证失效、版本不存在或权限不足",
+          "fallback": "只做离线 validate 与 plan，交付可复制的推送命令",
+          "user_input": "无",
+          "limitations": "文案未进线上，提交会被 whatsNew 缺失拦下",
+          "evidence_label": "部分验证",
+          "recovery": "恢复认证后重跑 publish_asc.sh；验收以 pull 回读为准",
+          "stop_condition": "plan 里出现删除项或名称/副标题非预期变更时停止"
+        }
+      ]
+    },
+    {
+      "id": "duoctl",
+      "type": "cli",
+      "required": false,
+      "auth_type": "none",
+      "capabilities": ["capture"],
+      "checks": [
+        { "id": "duoctl-present", "type": "cli", "required": false, "command": "duoctl" },
+        { "id": "duoctl-state", "type": "cli_probe", "required": true, "target": "duoctl state" }
+      ],
+      "setup": {
+        "official_home_url": "https://github.com/skarol/duoctl",
+        "official_docs_url": "https://github.com/skarol/duoctl#readme",
+        "steps": [
+          "brew install skarol/tap/duoctl",
+          "验证：duoctl state 能读出铰链角度",
+          "展开内屏后必须等画面真的转过去再判定姿态"
+        ],
+        "verify": "duoctl state 返回 inner + portrait，且探针图尺寸落在该设备的 pixels 集合里",
+        "security": "只操作模拟器铰链，不触碰真机与网络",
+        "verified_at": "2026-10-25",
+        "applies_to_version": "duoctl 0.x"
+      },
+      "degradation": [
+        {
+          "capability": "capture",
+          "trigger": "折叠设备但 duoctl 不可用",
+          "fallback": "跳过折叠设备，只出其余设备；或由用户手动摆好姿态后只跑抓图",
+          "user_input": "已摆好姿态的确认",
+          "limitations": "无法保证每区姿态一致，可能混入外屏尺寸（收货门会拦下）",
+          "evidence_label": "部分验证",
+          "recovery": "安装 duoctl 后重跑该设备",
+          "stop_condition": "收货门报尺寸不符且无法摆姿态时停止，不上传该设备截图"
+        }
+      ]
+    }
+  ],
+  "functional_degradations": [
+    {
+      "capability": "capture",
+      "trigger": "非 macOS、缺 Xcode/fastlane/duoctl，或没有可用截图",
+      "fallback": "停在美化阶段入口，用手工无框截图继续",
+      "user_input": "截图目录与每区张数",
+      "limitations": "无法证明截图来自当前代码、也无法自动验证本地化生效",
+      "evidence_label": "部分验证",
+      "recovery": "补齐环境后重跑抓图与收货门",
+      "stop_condition": "既不能抓图也没有手工截图时停止"
+    },
+    {
+      "capability": "beautify",
+      "trigger": "bun 与 node 都不可用，或编辑器启动失败且无法按故障目录修复",
+      "fallback": "交付已注入的工程与配置，附启动命令与故障排查项",
+      "user_input": "",
+      "limitations": "无本地预览、无导出，人工微调与导出需用户自备运行时完成",
+      "evidence_label": "部分验证",
+      "recovery": "安装运行时后重跑启动阶段",
+      "stop_condition": "需要当场确认渲染结果时停止，不宣称编辑器可用"
+    },
+    {
+      "capability": "verify",
+      "trigger": "缺 sips 且无 PIL，或产物目录不完整",
+      "fallback": "降级为张数与 md5 两项检查，尺寸门标记未验证",
+      "user_input": "",
+      "limitations": "抓错设备可能漏检",
+      "evidence_label": "未验证",
+      "recovery": "补齐 sips 或 PIL 后重跑收货门",
+      "stop_condition": "张数门也过不了时停止，不得进入上传"
+    },
+    {
+      "capability": "publish-screenshots",
+      "trigger": "asc 未安装、认证失效，或 validate 报错",
+      "fallback": "输出 staging 产物与手动上传步骤，附槽位与张数清单",
+      "user_input": "无",
+      "limitations": "线上状态未知，槽位是否写对只能由用户在后台确认",
+      "evidence_label": "部分验证",
+      "recovery": "恢复 asc 与认证后重跑上传与回读",
+      "stop_condition": "validate 不过或计划里出现意外删除时停止"
+    },
+    {
+      "capability": "publish-metadata",
+      "trigger": "认证失效、版本不存在、plan 出现删除项",
+      "fallback": "只做离线 validate 与 plan，交付命令清单",
+      "user_input": "无",
+      "limitations": "文案未上线，提交会被 whatsNew 缺失拦下",
+      "evidence_label": "部分验证",
+      "recovery": "恢复后重跑，验收以 pull 回读逐字段比为准",
+      "stop_condition": "名称或副标题出现非预期变更时停止"
+    }
+  ]
+}

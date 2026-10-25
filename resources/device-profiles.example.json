@@ -1,0 +1,34 @@
+{
+  "_comment": "设备身份的唯一出口。脚本、Fastfile、Snapfile、美化工程都要从这里取值，任何一处再写死设备名就是下一个静默抓错设备的来源。复制到 fastlane/device-profiles.json 后改值。",
+  "default": "iphone-69",
+  "profiles": {
+    "iphone-69": {
+      "name": "ASC-6.9",
+      "simType": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-18-0",
+      "udidFile": "fastlane/.simulator-udid",
+      "ascType": "IPHONE_67",
+      "pixels": ["1320x2868"],
+      "editorDevice": "iphone",
+      "exportSize": "1320x2868",
+      "shotsDir": "fastlane/screenshots",
+      "beautifiedDir": "fastlane/screenshots-beautified",
+      "seedDir": "~/asc-seeds/demo",
+      "foldable": false
+    },
+    "iphone-duo": {
+      "name": "ASC-DUO",
+      "simType": "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
+      "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-1",
+      "udidFile": "fastlane/.simulator-udid-duo",
+      "ascType": "IPHONE_DUO",
+      "pixels": ["2007x2853", "2853x2007"],
+      "editorDevice": "iphone-duo",
+      "exportSize": "2007x2853",
+      "shotsDir": "fastlane/screenshots-duo",
+      "beautifiedDir": "fastlane/screenshots-beautified-duo",
+      "seedDir": "~/asc-seeds/duo",
+      "foldable": true
+    }
+  }
+}
