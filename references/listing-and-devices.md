@@ -87,7 +87,7 @@ mkdir -p fastlane && cp resources/device-profiles.example.json fastlane/device-p
   "default": "iphone-69",
   "profiles": {
     "iphone-69": {
-      "name": "MYAPP-ASC-6.9", "simType": "…iPhone-16-Pro-Max", "runtime": "…iOS-18-0",
+      "name": "ASC-6.9", "simType": "…iPhone-16-Pro-Max", "runtime": "…iOS-18-0",
       "udidFile": "fastlane/.simulator-udid",
       "ascType": "IPHONE_67", "pixels": ["1320x2868"],
       "editorDevice": "iphone", "exportSize": "1320x2868",
@@ -95,7 +95,7 @@ mkdir -p fastlane && cp resources/device-profiles.example.json fastlane/device-p
       "seedDir": "~/asc-seeds/demo", "foldable": false
     },
     "iphone-duo": {
-      "name": "MYAPP-ASC-DUO", "simType": "…iPhone-Duo", "runtime": "…iOS-27-1",
+      "name": "ASC-DUO", "simType": "…iPhone-Duo", "runtime": "…iOS-27-1",
       "udidFile": "fastlane/.simulator-udid-duo",
       "ascType": "IPHONE_DUO", "pixels": ["2007x2853", "2853x2007"],
       "editorDevice": "iphone-duo", "exportSize": "2007x2853",
@@ -128,28 +128,60 @@ eval "$(bash scripts/device_profile.sh --export iphone-duo)"   # 得到 DEV_* �
 **漏改的表现不是报错，是静默抓错设备**，或静默抓到外屏尺寸（1398×2034 而不是内屏 2007×2853），
 要等到商店页上才发现。
 
-### `name` 必须带项目前缀
+### `name` 只是标签，查重按规格
 
-`simctl` 的设备名是**全机共用的命名空间**。两台不同项目都叫 `ASC-DUO` 时，
-`init_simulator.sh` 按名字会命中别人的设备并 `erase` 它——别人的演示数据全没了。
+一台设备的物理规格只有两个维度：`simType`（机型）与 `runtime`（系统版本）。
+`name` 是给人看的显示标签，`simctl` 允许同规格存在任意多台不同名字的设备。
 
-前缀（`MYAPP-ASC-6.9`）是唯一的分家手段，不要省。同一台机器上实际会并存
-`MYAPP-ASC-DUO`、`OTHER-ASC-DUO` 这类多项目设备，它们靠前缀区分。
+所以 **不要按名字查重**。按名字查重的直接后果是「每个项目一套」：10 个项目 ×
+2 档机型 = 20 台同规格设备，每台 1–3 GB，`CoreSimulator` 会越跑越慢。
+
+按规格查重则是「全机每种规格一台」，多个项目共用，**项目数增加不产生新设备**。
+冲突不在名字上，在**同一时刻只能有一个使用者**上——模拟器的 AX 会话同时只能被
+一个 UI 测试接管，两个项目并行争同一台会有一个卡死。
+
+什么时候才需要加项目前缀：**要长期独享时**。比如两个项目必须用不同 iOS 版本、
+或种子库不能互相覆盖，那就得两台不同规格/不同名字的设备，前缀用来分辨归属。
+名字里带上 app 标识（`MYAPP-ASC-DUO`）比 `ASC-DUO` 更容易在 `--prune` 时判断归属。
+
+### 共享一台设备的四个真实代价
+
+| 代价 | 机制 | 表现 |
+|---|---|---|
+| 数据串味 | 相册、SwiftData 容器都是设备级的 | A 写进相册的种子照片出现在 B 的截图里，**张数尺寸全对，收货门查不出来** |
+| `erase` 互踩 | `simctl erase` 抹整个设备容器 | A 正在跑抓图，B 的脚本 erase → A 的 app 容器消失、测试崩在随机位置 |
+| 不能并行 | AX 会话是设备级独占 | 两个 XCUITest 同时跑，一个必然超时 |
+| 不可复现 | 首次启动标记、TCC 授权、状态栏覆盖都是设备级 | 同一份代码两次跑出不同结果，且找不到原因 |
+
+**不冲突的三件事**：语言与区域（走 launchArguments `-AppleLanguages`，不是设备级）、
+相册权限（`privacy grant` 按 bundle id 各授一份）、App 数据本身（`erase` 就是干净的起点）。
+
+所以共享的成立条件是：**串行 + 每次 erase + 重铺种子库**。前两条脚本负责
+（`init_simulator.sh` 默认 erase，`duo_pose.sh` 摆姿态前也要求干净设备），
+第三条是调用方的事。要并行就 `xcrun simctl clone` 克隆一台、跑完即删，
+不要长期建独立设备。
 
 ### 设备只创建一次
 
-`xcrun simctl create` 不查重。绑定靠 `name` + `udidFile` 两样，由
+`xcrun simctl create` 不查重。绑定靠 `udidFile` + 规格查重，由
 `scripts/init_simulator.sh` 保证：
 
 | 层 | 判据 | 结果 |
 |---|---|---|
 | L1 | `udidFile` 里的 UDID 仍 `available` | 直接复用（主路径，跑多少轮都是同一台） |
-| L2 | 按 `name` + `runtime` 精确命中 | 复用，把 UDID 写回文件 |
-| L3 | 按 `name` 命中但 runtime 不符 | 复用，并提示 `--prune` 清旧档 |
-| L4 | 都没有 | 新建一台，此后永远走 L1 |
+| L2 | 同 `simType` + 同 `runtime`（同名优先） | 复用，把 UDID 写回文件 |
+| L3 | 同 `simType` + 同主版本 runtime（`iOS-18-0` vs `18-1`） | 复用，提示改档案的 runtime |
+| L4 | 同 `simType` 但大版本不符，或完全没有 | 建一台，旧档交给 `--prune` |
 
-细节、`--prune` 的删除范围、以及"同类型同 runtime 已有别的名字设备"的告警，见
-`setup-guide.md` 的"设备只创建一次"一节。
+**接管保护**：L2/L3 命中的若是**别人名字**的设备且当前 `Booted`，脚本 `exit 3`
+拒绝接管——它可能正被另一个项目跑着。确认要接管加 `--take-over`。
+
+`--prune` 只删**精确属于本档案**的：同名重复档（含 runtime 换代留下的旧档）与
+`<name> Clone N` / `Clone N of <name>` 克隆体。**判据必须是精确匹配不能是子串**
+——档案叫 `ASC-DUO` 时，`VR-ASC-DUO` 与 `ODM-ASC-DUO` 都包含这个子串，按子串删
+就是删别人的设备。同规格但名字不同的设备只报不删，列在"属其他项目，本脚本不碰"下。
+
+细节见 `setup-guide.md` 的"设备只创建一次"一节。
 
 ### 多设备的四条硬约定
 

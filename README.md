@@ -45,15 +45,20 @@ python3 scripts/check_environment.py --app-root .
 `xcrun simctl create` **不查重**。脚本里每次无脑 create 会让机器堆出十几台同名设备
 （每台 1–3 GB）和一串 `Clone N` 克隆体，最后 CoreSimulator 越跑越慢甚至挂住。
 
-绑定靠两样东西：档案里的 `name`（**必须带项目前缀**，如 `MYAPP-ASC-6.9`——设备名是全机
-共用命名空间，两个项目都叫 `ASC-DUO` 会互相 `erase`）和 `udidFile`（首次创建后落盘，
-之后每轮先读它）。
+绑定靠档案里的 `udidFile`（首次落盘，之后每轮先读它）和**规格查重**：一台设备的
+物理规格只有 `(simType, runtime)` 两个维度，`name` 只是标签。所以查重按规格走
+——全机每种规格一台，多个项目共用，**项目数增加不产生新设备**。按名字查重就会
+变成「每个项目一套」，那是设备膨胀的真正来源。
 
 ```bash
 bash scripts/init_simulator.sh <profile> --plan    # 先看会做什么，不动系统
 bash scripts/init_simulator.sh <profile>           # 复用优先，没有才建
 bash scripts/init_simulator.sh <profile> --prune   # 清掉本档案名下多余设备与克隆体
 ```
+
+共享的前提是串行 + 每次 erase（脚本默认就做）。命中的设备如果正 `Booted` 且不是
+本档案那台，脚本会拒绝接管（`exit 3`）——它可能正被别的项目跑着，`erase` 会踩掉对方的
+app 容器。确认要接管才加 `--take-over`。需要并行时用 `simctl clone`，不要建独立设备。
 
 模拟器管理界面在 Xcode 26 起叫 **Device Hub**（`open -a DeviceHub`），
 不再叫 Devices and Simulators。日常抓图不需要开它。

@@ -1,10 +1,10 @@
 {
   "_comment": "设备身份的唯一出口。脚本、Fastfile、Snapfile、美化工程都要从这里取值，任何一处再写死设备名就是下一个静默抓错设备的来源。复制到 fastlane/device-profiles.json 后改值。",
-  "_naming_rule": "name 必须带项目前缀（示例用 MYAPP-）。simctl 的设备名是全机共用的命名空间，两台不同项目都叫 ASC-DUO 时，init_simulator.sh 会命中别人的设备并 erase 它。前缀就是唯一的分家手段，不要省。",
+  "_naming_rule": "name 只是显示标签，查重按 (simType, runtime) 规格走 —— 全机每种规格一台，多个项目共用，项目数增加不会产生新设备。只有需要长期独享（两个项目要不同 iOS 版本或不同种子库）时才在名字前加项目前缀分家。名字里带上 app 标识，--prune 时才判断得出归属。",
   "default": "iphone-69",
   "profiles": {
     "iphone-69": {
-      "name": "MYAPP-ASC-6.9",
+      "name": "ASC-6.9",
       "simType": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max",
       "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-18-0",
       "udidFile": "fastlane/.simulator-udid",
@@ -18,7 +18,7 @@
       "foldable": false
     },
     "iphone-duo": {
-      "name": "MYAPP-ASC-DUO",
+      "name": "ASC-DUO",
       "simType": "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
       "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-1",
       "udidFile": "fastlane/.simulator-udid-duo",

@@ -1,7 +1,7 @@
 ---
 name: app-store-screenshots-pipeline
 description: End-to-end App Store screenshot and listing pipeline for iOS projects. Reads the listing from the project's own docs, captures frameless screenshots with fastlane across every locale and device (foldables included), gates the output by count, size, mtime and cross-locale pixels, injects them into the bundled Next.js beautify editor, proves the running editor in a real browser, exports, stages the upload tree, then pushes screenshots and metadata to App Store Connect and verifies by read-back. Absorbs the retired ios-fastlane-screenshots skill. 触发：跑截图流水线、给这个 App 出商店图、准备 App Store 截图、配 fastlane 多语言多设备截图、snapshot 抓图加框、更新商店页文案与更新说明。
-version: 2.0.0
+version: 2.0.1
 agent_created: true
 ---
 
@@ -65,7 +65,7 @@ eval "$(bash scripts/device_profile.sh --export <profile>)"
 **设备只创建一次。** `simctl create` 不查重，每次无脑建会让机器堆出十几台同名设备
 （每台 1–3 GB）和一串 `Clone N` 克隆体，最后 CoreSimulator 越跑越慢甚至挂住。
 绑定由 `scripts/init_simulator.sh` 保证：先读档案的 `udidFile`，那台还活着就直接用；
-没命中再按名字找；都没有才建，建完立刻落盘。
+没命中再**按规格**（`simType` + `runtime`）找同规格设备复用；都没有才建，建完立刻落盘。
 
 ```bash
 bash scripts/init_simulator.sh <profile> --plan    # 先看会做什么
@@ -73,8 +73,12 @@ bash scripts/init_simulator.sh <profile>           # 复用/首次创建 + 重�
 bash scripts/init_simulator.sh <profile> --prune   # 清掉本档案名下多余设备与克隆体
 ```
 
-档案里 `name` **必须带项目前缀**（`MYAPP-ASC-6.9`）：设备名是全机共用命名空间，
-两个项目都叫 `ASC-DUO` 会命中别人的设备并 `erase` 它。
+**按规格查重，不按名字**：`name` 只是标签，设备的物理身份是 `(simType, runtime)`。
+按名字查重会让每个项目各建一套，N 个项目就是 2N 台同规格设备——这才是膨胀的根源。
+
+共享一台的前提是串行 + 每次 erase（脚本默认就做）。命中的设备若正 `Booted` 且不是本档案
+那台，脚本 `exit 3` 拒绝接管（可能别人正跑着），确认要才加 `--take-over`。要并行用
+`simctl clone`，不要建独立设备。
 
 **门**：体检结果能支撑「抓图 + 美化」；`device_profile.sh --list` 能列出目标设备；
 `init_simulator.sh --plan` 显示的是「复用」而不是「首次创建」（除第一轮外）。
@@ -297,7 +301,8 @@ bash scripts/publish_asc.sh --app-id "$APP_ID" --version "$VERSION" \
 - 不把"跳过的门"写成"通过"。
 - **不在没定 `slides` 文案的情况下开拍**（图与文案会各走各的）。
 - **不用 `simctl create` 裸建设备**（绕开 `init_simulator.sh` 就会重复建、堆满磁盘）。
-- **不给设备起无前缀的名字**（跨项目撞名会 `erase` 掉别人的设备）。
+- **不按设备名查重**（按 `simType` + `runtime` 查重；按名字查重 = 每个项目一套设备）。
+- **不删同规格但名字不同的设备**（那是别的项目的，`--prune` 只清本档案精确同名与克隆体）。
 
 ## 文件索引
 
@@ -312,7 +317,7 @@ bash scripts/publish_asc.sh --app-id "$APP_ID" --version "$VERSION" \
 | `scripts/stage_beautified.sh` | 导出树 → ASC 上传树 + 硬门 |
 | `scripts/publish_asc.sh` | 文案五步 + 回读验收 |
 | `scripts/probe_environment.py` | 环境探针（被体检调用） |
-| `resources/device-profiles.example.json` | 设备档案样例，拷到项目里改值（记得换成自己的项目前缀） |
+| `resources/device-profiles.example.json` | 设备档案样例，拷到项目里改值（`name` 只是标签，改不改前缀都不影响查重） |
 | `resources/template/app-store-screenshots/` | 美化工程模板（Next.js + 设备机身 + 版式） |
 
 references 里按问题域分，遇到具体问题再翻，不要顺序通读：
